@@ -1,0 +1,759 @@
+import xml.etree.ElementTree as ET
+import math
+import re
+import yaml
+from pathlib import Path
+from typing import Dict, List, Any
+
+
+# ----------------------------------------------------------------------
+# SLX parsing — Stateflow machine + chart XML
+# ----------------------------------------------------------------------
+
+def load_stateflow_machine(z) -> Dict[str, int]:
+    """Parse simulink/stateflow/machine.xml -> {instance_name: chart_id}."""
+    path = 'simulink/stateflow/machine.xml'
+    if path not in z.namelist():
+        return {}
+    root = ET.fromstring(z.read(path).decode('utf-8'))
+    result = {}
+    for inst in root.findall('.//instance'):
+        name = inst.findtext("P[@Name='name']")
+        chart = inst.findtext("P[@Name='chart']")
+        if name and chart:
+            result[name] = int(chart)
+    return result
+
+
+def _collect_sf_states(children_elem, parent_path: str, depth: int,
+                        ssid_to_path: Dict[str, str], states: list) -> None:
+    if children_elem is None:
+        return
+    for state in children_elem.findall('state'):
+        ssid  = state.get('SSID', '')
+        label = state.findtext("P[@Name='labelString']", '').strip()
+        lines = label.split('\n')
+        sname = lines[0].strip()
+        actions = '\n'.join(l.strip() for l in lines[1:] if l.strip())
+        full_path = f'{parent_path}.{sname}' if parent_path else sname
+        ssid_to_path[ssid] = full_path
+        is_subchart = state.findtext("P[@Name='superState']", '') == 'SUBCHART'
+        states.append({
+            'ssid': ssid, 'name': sname, 'path': full_path,
+            'depth': depth, 'actions': actions, 'is_default': False,
+            'state_type': state.findtext("P[@Name='type']", 'OR_STATE'),
+            'is_subchart': is_subchart,
+        })
+        _collect_sf_states(state.find('Children'), full_path, depth + 1, ssid_to_path, states)
+
+
+def _parse_transition_label(label: str) -> Dict[str, str]:
+    """Split a Stateflow transition label into trigger / condition / action.
+
+    Full format: trigger[condition]{action}
+    Examples:
+      '[cond]'                    → trigger='', condition='cond', action=''
+      '[cond]{act}'               → trigger='', condition='cond', action='act'
+      'after(N,tick)[cond]{act}'  → trigger='after(N,tick)', condition='cond', action='act'
+      'evtName'                   → trigger='evtName', condition='', action=''
+    """
+    trigger, condition, action = '', '', ''
+    m = re.match(r'^(.*?)\s*\[([^\]]*)\](?:\s*\{([^}]*)\})?$', label, re.DOTALL)
+    if m:
+        trigger   = m.group(1).strip()
+        condition = m.group(2).strip()
+        action    = (m.group(3) or '').strip()
+    else:
+        m2 = re.match(r'^(.*?)\s*\{([^}]*)\}$', label, re.DOTALL)
+        if m2:
+            trigger = m2.group(1).strip()
+            action  = m2.group(2).strip()
+        else:
+            trigger = label.strip()
+    return {'trigger': trigger, 'condition': condition, 'action': action}
+
+
+def parse_stateflow_chart(z, chart_id: int) -> Dict:
+    """Parse simulink/stateflow/chart_{id}.xml into a structured dict."""
+    chart_path = f'simulink/stateflow/chart_{chart_id}.xml'
+    if chart_path not in z.namelist():
+        return {}
+    root = ET.fromstring(z.read(chart_path).decode('utf-8'))
+
+    # inputs / outputs / locals
+    inputs, outputs, locals_ = [], [], []
+    for d in root.findall('.//data'):
+        dname = d.get('name', '')
+        scope = d.findtext("P[@Name='scope']", '')
+        dtype = d.findtext("P[@Name='dataType']", '')
+        if scope == 'INPUT_DATA':
+            inputs.append({'name': dname, 'type': dtype})
+        elif scope == 'OUTPUT_DATA':
+            outputs.append({'name': dname, 'type': dtype})
+        elif scope == 'LOCAL_DATA':
+            locals_.append({'name': dname, 'type': dtype})
+
+    # states – recursive traversal, building full dotted paths
+    ssid_to_path: Dict[str, str] = {}
+    states: list = []
+    _collect_sf_states(root.find('Children'), '', 0, ssid_to_path, states)
+
+    # default states: entry transitions have no src SSID — find ALL of them
+    for t in root.findall('.//transition'):
+        if t.findtext("src/P[@Name='SSID']") is None:
+            dst_ssid = t.findtext("dst/P[@Name='SSID']")
+            if dst_ssid:
+                for s in states:
+                    if s['ssid'] == dst_ssid:
+                        s['is_default'] = True
+                        break
+
+    # transitions (skip default entry)
+    transitions = []
+    for t in root.findall('.//transition'):
+        src_ssid = t.findtext("src/P[@Name='SSID']")
+        dst_ssid = t.findtext("dst/P[@Name='SSID']")
+        if not src_ssid or not dst_ssid:
+            continue
+        label  = t.findtext("P[@Name='labelString']", '').strip()
+        parsed = _parse_transition_label(label)
+        order  = t.findtext("P[@Name='executionOrder']", '')
+        transitions.append({
+            'src':       ssid_to_path.get(src_ssid, src_ssid),
+            'dst':       ssid_to_path.get(dst_ssid, dst_ssid),
+            'trigger':   parsed['trigger'],
+            'condition': parsed['condition'],
+            'action':    parsed['action'],
+            'order':     order,
+        })
+
+    return {
+        'name': root.findtext("P[@Name='name']", ''),
+        'inputs': inputs,
+        'outputs': outputs,
+        'locals': locals_,
+        'states': states,
+        'transitions': transitions,
+    }
+
+
+_SF_KW_RE = re.compile(r'^(en|du|ex|en,du|du,ex|en,ex|en,du,ex)\s*:(.*)', re.IGNORECASE)
+
+
+def _render_sf_actions(actions: str, kw_indent: str, code_indent: str) -> list:
+    result = []
+    for line in actions.split('\n'):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        m = _SF_KW_RE.match(stripped)
+        if m:
+            result.append(f'{kw_indent}{m.group(1)}:')
+            if m.group(2).strip():
+                result.append(f'{code_indent}{m.group(2).strip()}')
+        else:
+            result.append(f'{code_indent}{stripped}')
+    return result
+
+
+def _sf_render(sf: Dict, path: str) -> str:
+    """Render a parsed stateflow chart dict as LLM-readable text."""
+    lines = [f"\n=== {path} [Stateflow] ==="]
+    if sf.get('inputs'):
+        lines.append('INPUTS:  ' + ' | '.join(d['name'] for d in sf['inputs']))
+    if sf.get('outputs'):
+        lines.append('OUTPUTS: ' + ' | '.join(d['name'] for d in sf['outputs']))
+    lines.append('')
+    lines.append('STATES:')
+    for s in sf.get('states', []):
+        indent = '  ' * (s.get('depth', 0) + 1)
+        tags = []
+        if s.get('state_type') == 'AND_STATE':
+            tags.append('[AND]')
+        if s.get('is_subchart'):
+            tags.append('[SUBCHART]')
+        tag = ('  ' + ' '.join(tags)) if tags else ''
+        ann = f"  (default, {s['path']})" if s.get('is_default') else f"  ({s['path']})"
+        lines.append(f"{indent}{s['name']}{tag}{ann}")
+        lines.extend(_render_sf_actions(s.get('actions', ''), indent + '  ', indent + '    '))
+    lines.append('')
+    lines.append('TRANSITIONS:')
+    max_src = max((len(t['src']) for t in sf.get('transitions', [])), default=0)
+    for t in sf.get('transitions', []):
+        trig  = f"{t['trigger']} " if t.get('trigger') else ''
+        cond  = f"[{t['condition']}]" if t['condition'] else ''
+        act   = f"{{{t['action']}}}" if t.get('action') else ''
+        arrow = f"{trig}--{cond}{act}-->"
+        lines.append(f"  {t['src']:<{max_src}}  {arrow}  {t['dst']}")
+    return '\n'.join(lines)
+
+
+# ----------------------------------------------------------------------
+# Stateflow export: flat internal dict → clean nested YAML/JSON structure
+# ----------------------------------------------------------------------
+
+class _SFYamlDumper(yaml.Dumper):
+    """YAML dumper that renders multi-line strings as literal block scalars (|)."""
+
+_SFYamlDumper.add_representer(
+    str,
+    lambda dumper, data: dumper.represent_scalar(
+        'tag:yaml.org,2002:str', data, style='|' if '\n' in data else None
+    )
+)
+
+
+def _parse_sf_actions_dict(actions: str) -> Dict[str, str]:
+    """Parse 'en:code\ndu:code' action string into {'en': 'code', 'du': 'code', ...}."""
+    result: Dict[str, str] = {}
+    current_kw = None
+    current_lines: list = []
+
+    def _flush():
+        if current_kw:
+            result[current_kw] = '\n'.join(current_lines).strip()
+
+    for line in actions.split('\n'):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        m = _SF_KW_RE.match(stripped)
+        if m:
+            _flush()
+            current_kw = m.group(1).lower()
+            current_lines = [m.group(2).strip()] if m.group(2).strip() else []
+        else:
+            current_lines.append(stripped)
+    _flush()
+    return result
+
+
+def _sf_states_to_nested(states: list) -> Dict:
+    """Convert flat state list (with dotted paths) into a nested ordered dict."""
+    tree: Dict = {}
+    for s in sorted(states, key=lambda x: x.get('depth', 0)):
+        parts = s['path'].split('.')
+        node = tree
+        for part in parts[:-1]:
+            node = node.setdefault(part, {}).setdefault('states', {})
+        leaf = node.setdefault(parts[-1], {})
+        if s.get('is_default'):
+            leaf['default'] = True
+        if s.get('is_subchart'):
+            leaf['subchart'] = True
+        if s.get('state_type') == 'AND_STATE':
+            leaf['type'] = 'AND'
+        actions = _parse_sf_actions_dict(s.get('actions', ''))
+        leaf.update(actions)
+    return tree
+
+
+def stateflow_chart_to_dict(sf: Dict) -> Dict:
+    """Convert internal stateflow parse result to a clean, portable nested dict.
+
+    Suitable for YAML/JSON export and later re-import to recreate the chart.
+    Schema:
+      name        : chart name
+      inputs      : [{name, type}]
+      outputs     : [{name, type}]
+      states      : nested dict — each state: {default?, type?, en?, du?, ex?, states?}
+      transitions : [{from, to, trigger?, condition?, action?, order?}]
+    """
+    transitions = []
+    for t in sf.get('transitions', []):
+        entry: Dict = {'from': t['src'], 'to': t['dst']}
+        if t.get('trigger'):
+            entry['trigger'] = t['trigger']
+        if t.get('condition'):
+            entry['condition'] = t['condition']
+        if t.get('action'):
+            entry['action'] = t['action']
+        if t.get('order'):
+            entry['order'] = t['order']
+        transitions.append(entry)
+
+    return {
+        'name':        sf.get('name', ''),
+        'inputs':      sf.get('inputs', []),
+        'outputs':     sf.get('outputs', []),
+        'locals':      sf.get('locals', []),
+        'states':      _sf_states_to_nested(sf.get('states', [])),
+        'transitions': transitions,
+    }
+
+
+def _collect_sf_charts(slim: Dict) -> Dict[str, Dict]:
+    """Recursively collect all stateflow charts from a slim model dict.
+    Returns {block_name: stateflow_parse_dict}.
+    """
+    charts: Dict[str, Dict] = {}
+    for blk in slim.get('blocks', {}).values():
+        sf = blk.get('stateflow')
+        if sf:
+            charts[blk.get('name', 'chart')] = sf
+        if 'subsystem' in blk:
+            charts.update(_collect_sf_charts(blk['subsystem']))
+    return charts
+
+
+# ----------------------------------------------------------------------
+# Stateflow → MATLAB script generation
+# ----------------------------------------------------------------------
+
+# Layout constants (Stateflow pixels)
+_SF_LEAF_W       = 150   # minimum width of a leaf state
+_SF_LEAF_H       = 80    # minimum height of a leaf state
+_SF_HEADER_H     = 30    # top strip reserved for state name label inside a parent
+_SF_PADDING      = 20    # inner padding between parent edge and children
+_SF_GAP          = 20    # gap between sibling states
+_SF_MAX_COLS     = 4     # max columns before wrapping to a new row
+_SF_LABEL_LINE_H = 16    # pixels per text line in label
+_SF_LABEL_PAD    = 20    # top+bottom padding inside leaf label area
+
+
+def _sf_label_height(state_body: Dict) -> int:
+    """Minimum pixel height for a leaf state based on label line count."""
+    lines = 1  # state name
+    for kw in ('en', 'du', 'ex'):
+        text = state_body.get(kw, '').strip()
+        if text:
+            lines += 1                       # "kw:" keyword line
+            lines += len(text.split('\n'))   # code lines
+    return max(_SF_LEAF_H, _SF_LABEL_LINE_H * lines + _SF_LABEL_PAD)
+
+
+def _direct_child_name(path: str, prefix: str) -> str:
+    """Return the first path component under prefix, or '' if path is not a descendant."""
+    if prefix:
+        if not path.startswith(prefix + '.'):
+            return ''
+        rest = path[len(prefix) + 1:]
+    else:
+        rest = path
+    return rest.split('.')[0] if rest else ''
+
+
+def _find_sink_states(states_dict: Dict, transitions: list, path_prefix: str) -> set:
+    """Return names of direct children that are fault/error sinks.
+
+    A sink is a child with no outgoing transitions to siblings. Only named states
+    containing 'FAULT' or 'ERROR' qualify, and only when at least 2 non-sink
+    siblings exist (avoids false-positive sidebars at the chart root level).
+    """
+    child_names = set(states_dict.keys())
+    froms: set = set()
+    for t in transitions:
+        src_top = _direct_child_name(t.get('from', ''), path_prefix)
+        dst_top = _direct_child_name(t.get('to', ''), path_prefix)
+        if src_top in child_names and dst_top in child_names and src_top != dst_top:
+            froms.add(src_top)
+    pure_sinks = child_names - froms
+    fault_sinks = {s for s in pure_sinks if 'FAULT' in s.upper() or 'ERROR' in s.upper()}
+    # Require at least 2 normal children to avoid unwanted sidebars at root level
+    if len(child_names) - len(fault_sinks) < 2:
+        return set()
+    return fault_sinks
+
+
+def _sf_state_size(state_body: Dict, transitions=None, path_prefix: str = '') -> tuple:
+    """Return (width, height) required to render this state and all its children."""
+    children = state_body.get('states', {})
+    if not children:
+        return (_SF_LEAF_W, _sf_label_height(state_body))
+
+    names = list(children.keys())
+
+    sink_names = _find_sink_states(children, transitions or [], path_prefix) if transitions is not None else set()
+    normal_names = [n for n in names if n not in sink_names]
+    sink_list    = [n for n in names if n in sink_names]
+    if not normal_names:
+        normal_names = names
+        sink_list = []
+
+    def child_prefix(name):
+        return f'{path_prefix}.{name}' if path_prefix else name
+
+    sizes = {name: _sf_state_size(children[name], transitions, child_prefix(name))
+             for name in names}
+
+    n = len(normal_names)
+    cols = min(n, _SF_MAX_COLS)
+    rows = math.ceil(n / cols)
+
+    col_w = [
+        max(sizes[normal_names[r * cols + c]][0] for r in range(rows) if r * cols + c < n)
+        for c in range(cols)
+    ]
+    row_h = [
+        max(sizes[normal_names[r * cols + c]][1] for c in range(cols) if r * cols + c < n)
+        for r in range(rows)
+    ]
+    grid_w = sum(col_w) + (cols - 1) * _SF_GAP
+    grid_h = sum(row_h) + (rows - 1) * _SF_GAP
+
+    sink_extra_w = 0
+    if sink_list:
+        max_sink_w = max(sizes[sn][0] for sn in sink_list)
+        sink_extra_w = _SF_GAP + max_sink_w
+
+    total_w = 2 * _SF_PADDING + grid_w + sink_extra_w
+    total_h = _SF_HEADER_H + 2 * _SF_PADDING + grid_h
+    return (total_w, total_h)
+
+
+def _compute_sf_layout(states_dict: Dict, origin_x: int = 20, origin_y: int = 20,
+                        path_prefix: str = '', transitions=None) -> Dict[str, tuple]:
+    """Recursively compute {dotted.path: (x, y, w, h)} for all states.
+
+    Fault/error sink states (FAULT_ACTIVE, etc.) that have no outgoing transitions
+    to siblings are placed as a tall sidebar column on the right side of the
+    container, spanning the full height of the normal-child grid.
+    """
+    result: Dict[str, tuple] = {}
+    names = list(states_dict.keys())
+    n = len(names)
+    if n == 0:
+        return result
+
+    sink_names = _find_sink_states(states_dict, transitions or [], path_prefix) if transitions is not None else set()
+    normal_names = [name for name in names if name not in sink_names]
+    sink_list    = [name for name in names if name in sink_names]
+    if not normal_names:
+        normal_names = names
+        sink_list = []
+
+    def child_prefix(name):
+        return f'{path_prefix}.{name}' if path_prefix else name
+
+    sizes = {name: _sf_state_size(states_dict[name], transitions, child_prefix(name))
+             for name in names}
+
+    n_norm = len(normal_names)
+    cols = min(n_norm, _SF_MAX_COLS)
+    rows = math.ceil(n_norm / cols)
+
+    col_w = [
+        max(sizes[normal_names[r * cols + c]][0] for r in range(rows) if r * cols + c < n_norm)
+        for c in range(cols)
+    ]
+    row_h = [
+        max(sizes[normal_names[r * cols + c]][1] for c in range(cols) if r * cols + c < n_norm)
+        for r in range(rows)
+    ]
+    grid_w = sum(col_w) + (cols - 1) * _SF_GAP
+    grid_h = sum(row_h) + (rows - 1) * _SF_GAP
+
+    for idx, name in enumerate(normal_names):
+        r, c = divmod(idx, cols)
+        x = origin_x + sum(col_w[:c]) + c * _SF_GAP
+        y = origin_y + sum(row_h[:r]) + r * _SF_GAP
+        w, h = sizes[name]
+        full_path = child_prefix(name)
+        result[full_path] = (x, y, w, h)
+        children = states_dict[name].get('states', {})
+        if children:
+            result.update(_compute_sf_layout(
+                children,
+                origin_x=x + _SF_PADDING,
+                origin_y=y + _SF_HEADER_H + _SF_PADDING,
+                path_prefix=full_path,
+                transitions=transitions,
+            ))
+
+    # Place sink states as full-height sidebar on the right
+    sink_x = origin_x + grid_w + _SF_GAP
+    for name in sink_list:
+        w, _ = sizes[name]
+        full_path = child_prefix(name)
+        result[full_path] = (sink_x, origin_y, w, grid_h)
+        sink_x += w + _SF_GAP
+
+    return result
+
+
+def _rebuild_state_label(name: str, actions: Dict[str, str]) -> str:
+    """Reconstruct the Stateflow LabelString for a state from its name and actions dict."""
+    parts = [name]
+    for kw in ('en', 'du', 'ex'):
+        code = actions.get(kw, '').strip()
+        if code:
+            parts.append(f'{kw}:\n{code}')
+    for kw, code in actions.items():
+        if kw not in ('en', 'du', 'ex') and code.strip():
+            parts.append(f'{kw}:\n{code.strip()}')
+    return '\n'.join(parts)
+
+
+def _rebuild_transition_label(trigger: str, condition: str, action: str) -> str:
+    """Reconstruct a Stateflow transition LabelString from parsed fields."""
+    parts = []
+    if trigger:
+        parts.append(trigger)
+    if condition:
+        parts.append(f'[{condition}]')
+    if action:
+        parts.append(f'{{{action}}}')
+    return ''.join(parts)
+
+
+def _escape_matlab_str(s: str) -> str:
+    """Escape a string for use inside MATLAB single-quoted string literals."""
+    return s.replace("'", "''")
+
+
+def _matlab_str_literal(s: str) -> str:
+    """Return a MATLAB expression for string s.
+
+    Multi-line strings use sprintf('...\\n...') so MATLAB parses them correctly.
+    Single-line strings use plain 'value' notation.
+    """
+    escaped = _escape_matlab_str(s)
+    if '\n' in escaped:
+        return "sprintf('" + escaped.replace('\n', '\\n') + "')"
+    return f"'{escaped}'"
+
+
+def _lca_path(path1: str, path2: str) -> str:
+    """Return the dotted path of the lowest common ancestor of two state paths.
+
+    Returns '' when the LCA is the chart itself (i.e. both are top-level states).
+    """
+    if not path1 or not path2:
+        return ''
+    parts1 = path1.split('.')
+    parts2 = path2.split('.')
+    common = []
+    for a, b in zip(parts1, parts2):
+        if a == b:
+            common.append(a)
+        else:
+            break
+    return '.'.join(common)
+
+
+def _emit_sf_default_transition(
+    dst_var: str,
+    parent_var: str,
+    counter: List[int],
+    lines: List[str],
+    is_auto: bool = False,
+) -> None:
+    """Emit a Stateflow default transition (no source) pointing to dst_var."""
+    counter[0] += 1
+    tv = f't{counter[0]}'
+    if is_auto:
+        lines.append('% AUTO-DEFAULT (no default child in YAML; using first child)')
+    lines.append(f"{tv} = Stateflow.Transition({parent_var});")
+    lines.append(f"{tv}.Destination = {dst_var};")
+    lines.append(f"{tv}.DestinationOClock = 0;")
+    lines.append(f"{tv}.SourceEndPoint = {tv}.DestinationEndpoint + [0 -30];")
+    lines.append(f"{tv}.MidPoint = {tv}.DestinationEndpoint + [0 -15];")
+
+
+def _sf_states_to_matlab_lines(
+    states_dict: Dict,
+    parent_var: str,
+    path_prefix: str,
+    counter: List[int],
+    path_to_var: Dict[str, str],
+    lines: List[str],
+    positions: Dict[str, tuple],
+) -> None:
+    """Recursively emit MATLAB lines that create Stateflow states."""
+    default_child_name = None
+    has_explicit_default = False
+    for name, body in states_dict.items():
+        if body.get('default'):
+            default_child_name = name
+            has_explicit_default = True
+            break
+    if default_child_name is None and states_dict:
+        default_child_name = next(iter(states_dict))
+
+    for state_name, state_body in states_dict.items():
+        counter[0] += 1
+        var = f's{counter[0]}'
+        full_path = f'{path_prefix}.{state_name}' if path_prefix else state_name
+        path_to_var[full_path] = var
+
+        actions = {k: v for k, v in state_body.items()
+                   if k not in ('states', 'default', 'type', 'subchart') and isinstance(v, str)}
+        label = _rebuild_state_label(state_name, actions)
+
+        lines.append(f"{var} = Stateflow.State({parent_var});")
+        lines.append(f"{var}.Name = '{_escape_matlab_str(state_name)}';")
+        lines.append(f"{var}.LabelString = {_matlab_str_literal(label)};")
+        if full_path in positions:
+            x, y, w, h = positions[full_path]
+            lines.append(f"{var}.Position = [{x} {y} {w} {h}];")
+
+        if state_body.get('subchart'):
+            lines.append(f"{var}.IsSubchart = true;")
+
+        if state_body.get('type') == 'AND':
+            lines.append(f"{var}.Decomposition = 'PARALLEL_AND';")
+
+        if state_name == default_child_name:
+            _emit_sf_default_transition(
+                var, parent_var, counter, lines,
+                is_auto=not has_explicit_default,
+            )
+
+        children = state_body.get('states', {})
+        if children:
+            _sf_states_to_matlab_lines(children, var, full_path, counter, path_to_var, lines, positions)
+
+
+def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None) -> str:
+    """Generate a MATLAB .m script that recreates a Stateflow chart from a chart dict.
+
+    chart_dict should be the output of stateflow_chart_to_dict().
+    model_name defaults to the chart name with spaces replaced by underscores.
+    """
+    chart_name = chart_dict.get('name', 'Chart')
+    if model_name is None:
+        model_name = re.sub(r'[^\w]', '_', chart_name)
+
+    lines: List[str] = []
+    lines.append(f'%% Generated by slx2txt — recreates Stateflow chart: {chart_name}')
+    lines.append('')
+    lines.append(f"model_name = '{_escape_matlab_str(model_name)}';")
+    lines.append("if bdIsLoaded(model_name), close_system(model_name, 0); end")
+    lines.append("if exist([model_name '.slx'], 'file'), delete([model_name '.slx']); end")
+    lines.append("new_system(model_name);")
+    lines.append("load_system(model_name);")
+    lines.append('')
+    lines.append(f"add_block('sflib/Chart', [model_name '/Chart']);")
+    lines.append("rt = sfroot;")
+    lines.append("m = rt.find('-isa', 'Stateflow.Machine', 'Name', model_name);")
+    lines.append("ch = m.find('-isa', 'Stateflow.Chart');")
+    lines.append(f"ch.Name = '{_escape_matlab_str(chart_name)}';")
+
+    inputs = chart_dict.get('inputs', [])
+    if inputs:
+        lines.append('')
+        lines.append('%% Inputs')
+    for i, d in enumerate(inputs, 1):
+        v = f'd_in{i}'
+        lines.append(f"{v} = Stateflow.Data(ch);")
+        lines.append(f"{v}.Name = '{_escape_matlab_str(d['name'])}';")
+        lines.append(f"{v}.Scope = 'Input';")
+        if d.get('type'):
+            lines.append(f"{v}.DataType = '{_escape_matlab_str(d['type'])}';")
+
+    outputs = chart_dict.get('outputs', [])
+    if outputs:
+        lines.append('')
+        lines.append('%% Outputs')
+    for i, d in enumerate(outputs, 1):
+        v = f'd_out{i}'
+        lines.append(f"{v} = Stateflow.Data(ch);")
+        lines.append(f"{v}.Name = '{_escape_matlab_str(d['name'])}';")
+        lines.append(f"{v}.Scope = 'Output';")
+        if d.get('type'):
+            lines.append(f"{v}.DataType = '{_escape_matlab_str(d['type'])}';")
+
+    locals_ = chart_dict.get('locals', [])
+    if locals_:
+        lines.append('')
+        lines.append('%% Local variables')
+    for i, d in enumerate(locals_, 1):
+        v = f'd_loc{i}'
+        lines.append(f"{v} = Stateflow.Data(ch);")
+        lines.append(f"{v}.Name = '{_escape_matlab_str(d['name'])}';")
+        lines.append(f"{v}.Scope = 'Local';")
+        if d.get('type'):
+            lines.append(f"{v}.DataType = '{_escape_matlab_str(d['type'])}';")
+
+    states_dict = chart_dict.get('states', {})
+    transitions = chart_dict.get('transitions', [])
+    # Sort by (from-path, order) so transitions from the same source are emitted
+    # in ascending execution-order. Stateflow auto-assigns order by creation
+    # sequence, so this prevents renumbering conflicts when we later set
+    # ExecutionOrder explicitly.
+    transitions = sorted(
+        transitions,
+        key=lambda t: (t.get('from', ''), int(t.get('order', '0')))
+    )
+
+    counter: List[int] = [0]
+    path_to_var: Dict[str, str] = {}
+    positions: Dict[str, tuple] = {}
+    if states_dict:
+        positions = _compute_sf_layout(states_dict, transitions=transitions)
+        lines.append('')
+        lines.append('%% States')
+        _sf_states_to_matlab_lines(states_dict, 'ch', '', counter, path_to_var, lines, positions)
+
+    if transitions:
+        lines.append('')
+        lines.append('%% Transitions')
+    for tr in transitions:
+        counter[0] += 1
+        tv = f't{counter[0]}'
+        src_path = tr.get('from', '')
+        dst_path = tr.get('to', '')
+        src_var = path_to_var.get(src_path, '')
+        dst_var = path_to_var.get(dst_path, '')
+        lca = _lca_path(src_path, dst_path)
+        tr_parent_var = path_to_var.get(lca, 'ch') if lca else 'ch'
+        label = _rebuild_transition_label(
+            tr.get('trigger', ''), tr.get('condition', ''), tr.get('action', '')
+        )
+        lines.append(f"{tv} = Stateflow.Transition({tr_parent_var});")
+        if src_var:
+            lines.append(f"{tv}.Source = {src_var};")
+        else:
+            lines.append(f"% WARNING: source state '{src_path}' not found")
+        if dst_var:
+            lines.append(f"{tv}.Destination = {dst_var};")
+        else:
+            lines.append(f"% WARNING: destination state '{dst_path}' not found")
+        if label:
+            lines.append(f"{tv}.LabelString = {_matlab_str_literal(label)};")
+        if tr.get('order'):
+            lines.append(f"{tv}.ExecutionOrder = {tr['order']};")
+        if src_path in positions and dst_path in positions:
+            sx, sy, sw, sh = positions[src_path]
+            dx, dy, dw, dh = positions[dst_path]
+            src_cx = sx + sw // 2
+            dst_cx = dx + dw // 2
+            mid_x  = (src_cx + dst_cx) // 2
+            mid_y  = ((sy + sh // 2) + (dy + dh // 2)) // 2
+            lines.append(f"{tv}.MidPoint = [{mid_x} {mid_y}];")
+            if src_cx <= dst_cx:
+                lines.append(f"{tv}.SourceOClock = 3;")
+                lines.append(f"{tv}.DestinationOClock = 9;")
+            else:
+                lines.append(f"{tv}.SourceOClock = 9;")
+                lines.append(f"{tv}.DestinationOClock = 3;")
+
+    lines.append('')
+    lines.append('% Auto-arrange blocks in the Simulink diagram')
+    lines.append("Simulink.BlockDiagram.arrangeSystem(model_name);")
+    lines.append('% Note: internal Stateflow state layout must be arranged manually')
+    lines.append('% (open the chart and use Format > Auto Arrange)')
+    lines.append('save_system(model_name);')
+    lines.append(f"disp(['Chart saved to model: ' model_name]);")
+    lines.append('')
+    lines.append('%% Diagnostics — compile the diagram to surface Stateflow errors')
+    lines.append('try')
+    lines.append("    set_param(model_name, 'SimulationCommand', 'update');")
+    lines.append("    disp('Diagram update: OK');")
+    lines.append('catch e')
+    lines.append("    fprintf('Diagram update errors:\\n%s\\n', e.message);")
+    lines.append('end')
+
+    return '\n'.join(lines) + '\n'
+
+
+def sf_yaml_to_matlab(yaml_path, output_path=None) -> str:
+    """Read a Stateflow sf.yaml file and generate a MATLAB script to recreate it.
+
+    Returns the script as a string. If output_path is given, also writes it to disk.
+    """
+    chart_dict = yaml.safe_load(Path(yaml_path).read_text(encoding='utf-8'))
+    script = stateflow_dict_to_matlab(chart_dict)
+    if output_path:
+        Path(output_path).write_text(script, encoding='utf-8')
+    return script
