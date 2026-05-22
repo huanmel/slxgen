@@ -372,15 +372,16 @@ chart_dict = stateflow_chart_to_dict(sf)   # sf = blk['stateflow'] from slim
 
 - **MATLAB Function blocks**: listed in machine.xml but not parsed (different
   internal structure, not standard Stateflow states/transitions)
-- **sf.yaml → SLX creation**: export is done, import/creation not yet implemented.
-  Planned approach: generate MATLAB script using Stateflow API (`sfnew`, `Stateflow.Chart`,
-  `add_state`, etc.) from the YAML schema
+- **sf.yaml → SLX creation**: `stateflow_dict_to_matlab(chart_dict)` generates a MATLAB
+  `.m` script using the Stateflow API. `sf_yaml_to_matlab(yaml_path)` reads a yaml and
+  returns the script. `slx_process(..., outputs=['sf.m'])` saves it alongside sf.yaml.
+  Limitation: `sfAutoArrange` is called at the end but manual layout may still be needed.
 - **ReferencedSubsystem charts**: charts inside cross-file referenced subsystems
   (e.g. `ClimCtl_sub`) are found when that SLX is processed by `process_model_tree`.
   They do NOT appear in the parent model's sf.yaml export.
-- **Transition label parsing**: complex labels like
-  `after(InitTout,tick)[HMI_Online && ~VerCheckOk]{HMI_fault=...}` are partially
-  parsed (condition extracted) but `after(...)` temporal logic is kept raw in condition
+- **Transition label parsing**: `_parse_transition_label()` now correctly splits
+  `after(InitTout,tick)[HMI_Online && ~VerCheckOk]{HMI_fault=...}` into
+  `trigger`, `condition`, and `action` fields. `trigger` appears in sf.yaml and report.txt.
 - **`_arch.md` output**: Mermaid diagram generation exists but was disabled in
   `process_model.py` for current workflow (user only needs report.txt + sf.yaml)
 - **No `__init__.py`**: notebooks use `sys.path.insert` hack. Add `__init__.py`

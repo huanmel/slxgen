@@ -9,6 +9,8 @@ from .slx2txt import (
     compare_models,
     compare_model_trees,
     stateflow_chart_to_dict,
+    stateflow_dict_to_matlab,
+    sf_yaml_to_matlab,
 )
 
 __all__ = [
@@ -22,4 +24,6 @@ __all__ = [
     'compare_models',
     'compare_model_trees',
     'stateflow_chart_to_dict',
+    'stateflow_dict_to_matlab',
+    'sf_yaml_to_matlab',
 ]
