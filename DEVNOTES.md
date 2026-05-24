@@ -445,21 +445,83 @@ by Claude (multimodal) for automated layout review without manual screenshots.
 
 ---
 
+## ELK-based layout (as of 2026-05)
+
+Stateflow chart layout is computed by ELK (Eclipse Layout Kernel) via `elkjs` npm,
+replacing the old `_compute_sf_layout()` BFS grid.
+
+### Pipeline
+
+```
+chart_dict  →  sf_to_elk_json()  →  elk_layout()  →  elk_to_stateflow_layout()
+                elk_layout.py       node elk_runner.js    elk_layout.py
+                                                              ↓
+                                              positions + edge_routing
+                                                              ↓
+                                         stateflow_dict_to_matlab()  (stateflow.py)
+```
+
+### Tuned defaults (from 37-variant sweep on HMI_StMach)
+
+| Setting | Value | Why |
+| ------- | ----- | --- |
+| `label_substitution=True` | default | Omit label dims from ELK — routes geometrically, 40% narrower containers. Any label (even 1px) causes ELK to insert dummy routing nodes adding 600-700px height. |
+| `nodePlacement.strategy` | `LINEAR_SEGMENTS` | Straightens state chains |
+| `nodePlacement.alignment` | `CENTER` | Prevents zigzag |
+| `edgeRouting` | `SPLINES` | Smooth Bezier, closest to native Stateflow style |
+| `spacing.nodeNode` | `50` | Compact but readable |
+| `nodeNodeBetweenLayers` | `60` | Compact vertical separation |
+| Compound top padding | dynamic | `_compound_header_h(body)` computes actual header height from en/du/ex action line count — fixed ON_INIT overlapping parent header |
+| `_ELK_LABEL_MID_X = 10` | LCA-relative | MidPoint x override for labeled transitions — labels start at left margin and extend rightward instead of overflowing from arc center |
+
+### Override mechanism
+
+Pass `elk_options=` to `stateflow_dict_to_matlab()`. Special `__` keys are intercepted:
+
+- `__max_label_width__`: override `_LABEL_MAX_WIDTH_PX` for this call
+- `__label_substitution__`: override the default `True`
+
+### Known remaining layout issues
+
+1. **Multiple transitions to the same destination at the same y**: e.g. two fault
+   transitions from ON→FAULT_ACTIVE both land at `MidPoint=[10, 494]`. Labels overlap.
+   Root cause: topology (same src/dst tier), not layout. Fix: semantic role classification
+   (route fault transitions laterally, not downward — proposals.md Step 3).
+
+2. **Long labels overflow right edge**: 75-char labels (≈525px) exceed container width
+   (≈430px). Labels start at x=10 so only ~95px overflows. Acceptable for now.
+
+3. **Fault state placement**: `_find_sink_states()` pushes states with FAULT/ERROR in
+   name to `layerConstraint: LAST`. This works for the primary fault state but does not
+   separate fault transitions visually from the main chain.
+
+### Variant research script
+
+`work/test_elk_variants.py` — 37 variants, model-agnostic.
+
+```
+python work/test_elk_variants.py path/to/chart_sf.yaml    # summary table
+python work/test_elk_variants.py --write                   # write .m files
+python work/test_elk_variants.py --log results.csv         # cross-model CSV
+```
+
+---
+
 ## Known gaps / future work
 
 - **MATLAB Function blocks**: listed in machine.xml but not parsed (different
   internal structure, not standard Stateflow states/transitions)
-- **sf.yaml → SLX creation**: layout is computed by `_compute_sf_layout()` in
-  `stateflow.py` (BFS ordering, sink sidebar, vertical stacking for wide containers).
-  `sfAutoArrange` is also called but has no effect when positions are already set.
-  Manual layout tweaks may still be needed for complex charts.
 - **ReferencedSubsystem charts**: charts inside cross-file referenced subsystems
   (e.g. `ClimCtl_sub`) are found when that SLX is processed by `process_model_tree`.
   They do NOT appear in the parent model's sf.yaml export.
-- **MATLAB Function blocks**: listed in machine.xml but not parsed (different
-  internal structure, not standard Stateflow states/transitions).
 - **`_arch.md` output**: Mermaid diagram generation exists but is disabled in
   `process_model.py` for current workflow (only report.txt + sf.yaml needed).
+- **ELK role classification (proposals.md Steps 1-3)**: classify states as
+  init/main/fault/auxiliary; detect dominant path; apply `layerConstraint: FIRST`
+  for default states; set edge `priority` for dominant-path transitions. Would fix
+  the stacked-label problem and improve fault-transition routing.
+- **ELK template patterns**: detect common FSM topologies (linear chain, hub-and-spoke,
+  fault-tolerant chain) and apply pre-tuned layout constraints per pattern.
 
 ---
 
