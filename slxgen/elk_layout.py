@@ -30,6 +30,31 @@ def _label_size(text: str, max_width: int = _LABEL_MAX_WIDTH_PX) -> Tuple[int, i
     return w, h
 
 
+_FAULT_KEYWORDS = ('FAULT', 'ERROR')
+_INIT_KEYWORDS  = ('INIT',)
+
+
+def _state_role(name: str, body: dict) -> str:
+    """Infer layout role for a state from its name and body.
+
+    Roles:
+      'fault'  — error / exception states; placed in a dedicated right-column partition
+      'init'   — default (entry) state; ELK FIRST layer constraint
+      'normal' — everything else
+
+    Explicit override: set ``role: fault|init|normal`` in the state body (sf.yaml).
+    """
+    explicit = body.get('role', '').lower()
+    if explicit in ('fault', 'init', 'normal'):
+        return explicit
+    upper = name.upper()
+    if any(kw in upper for kw in _FAULT_KEYWORDS):
+        return 'fault'
+    if body.get('default') or any(kw in upper for kw in _INIT_KEYWORDS):
+        return 'init'
+    return 'normal'
+
+
 def _compound_header_h(body: dict) -> int:
     """Pixel height of the header strip for a compound (parent) state.
 
@@ -164,14 +189,26 @@ def sf_to_elk_json(chart_dict: dict, layout_options: 'dict | None' = None,
             init_name   = next((n for n in children_dict if children_dict[n].get('default')), None)
             dominant    = _find_dominant_path_edges(children_dict, full_path, child_sinks)
 
+            child_roles = {cname: _state_role(cname, cbody) for cname, cbody in children_dict.items()}
+            has_fault   = any(r == 'fault' for r in child_roles.values())
+            if has_fault:
+                node['layoutOptions']['elk.partitioning.activate'] = 'true'
+
             children_nodes = []
             for cname, cbody in children_dict.items():
                 child_node = build_node(cname, cbody, full_path)
                 lo = child_node.setdefault('layoutOptions', {})
-                if cname in child_sinks:
+                role = child_roles[cname]
+                if role == 'fault':
+                    lo['elk.partitioning.partition'] = '1'
                     lo['elk.layered.layerConstraint'] = 'LAST'
-                elif cname == init_name:
-                    lo['elk.layered.layerConstraint'] = 'FIRST'
+                else:
+                    if has_fault:
+                        lo['elk.partitioning.partition'] = '0'
+                    if cname in child_sinks:
+                        lo['elk.layered.layerConstraint'] = 'LAST'
+                    elif cname == init_name:
+                        lo['elk.layered.layerConstraint'] = 'FIRST'
                 children_nodes.append(child_node)
             node['children'] = children_nodes
 
@@ -316,4 +353,70 @@ def elk_to_stateflow_layout(elk_result: dict) -> Tuple[dict, dict]:
 
     collect_edges(elk_result, 0, 0)
 
+    _place_fault_states_right(positions)
+
     return positions, edge_routing
+
+
+def _place_fault_states_right(positions: dict) -> None:
+    """Move fault states to a right-column zone within their compound parent.
+
+    Operates in-place on the global positions dict.  For each compound node
+    that has both normal and fault children:
+      - normal children keep their positions
+      - fault children are stacked vertically to the right of the normal bbox,
+        centred on the normal children's vertical midpoint
+      - the parent's width is expanded to fit
+
+    elk.hierarchyHandling=INCLUDE_CHILDREN prevents ELK partitioning from
+    working at the compound level, so we enforce the placement here.
+    """
+    _FAULT_ZONE_GAP = 60  # horizontal gap between normal bbox and fault column
+
+    # Build {parent_path: [child_path, ...]} from the dotted names
+    parent_children: Dict[str, list] = {}
+    for path in positions:
+        if '.' in path:
+            parent = path.rsplit('.', 1)[0]
+            parent_children.setdefault(parent, []).append(path)
+
+    for parent_path, child_paths in parent_children.items():
+        if parent_path not in positions:
+            continue
+
+        fault_paths  = [p for p in child_paths
+                        if any(kw in p.rsplit('.', 1)[-1].upper() for kw in _FAULT_KEYWORDS)]
+        normal_paths = [p for p in child_paths if p not in fault_paths]
+        if not fault_paths or not normal_paths:
+            continue
+
+        px, py, pw, _ = positions[parent_path]
+
+        # Bounding box of normal children (global coords)
+        nr = max(positions[p][0] + positions[p][2] for p in normal_paths)  # right edge
+        nt = min(positions[p][1]                    for p in normal_paths)  # top
+        nb = max(positions[p][1] + positions[p][3]  for p in normal_paths)  # bottom
+
+        fault_x = nr + _FAULT_ZONE_GAP
+        # Stack fault states vertically, centred on normal children
+        fault_paths_sorted = sorted(fault_paths, key=lambda p: positions[p][1])
+        total_h = sum(positions[p][3] for p in fault_paths_sorted)
+        gaps_h  = 20 * (len(fault_paths_sorted) - 1)
+        cy = (nt + nb) // 2
+        fy = cy - (total_h + gaps_h) // 2
+        fy = max(py + 20, fy)  # don't overlap compound header
+
+        for fp in fault_paths_sorted:
+            _, _, fw, fh = positions[fp]
+            positions[fp] = (fault_x, fy, fw, fh)
+            fy += fh + 20
+
+        # Expand parent width; trim height to actual content bounding box.
+        # ELK sized the height to fit FAULT_ACTIVE at the bottom; after moving
+        # it right the lower portion is empty — trim it.
+        fault_right   = fault_x + max(positions[p][2] for p in fault_paths)
+        fault_bottom  = max(positions[p][1] + positions[p][3] for p in fault_paths)
+        content_bottom = max(nb, fault_bottom)
+        new_pw = max(pw, fault_right - px + 20)
+        new_ph = content_bottom - py + 20   # trim to content; always >= actual content
+        positions[parent_path] = (px, py, new_pw, new_ph)

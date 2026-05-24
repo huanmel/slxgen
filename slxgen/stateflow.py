@@ -783,7 +783,8 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
     if transitions:
         lines.append('')
         lines.append('%% Transitions')
-    _stagger_used: dict = {}  # {(lca, src_path): [mid_y]} — track labeled transition y-positions to avoid stacking
+    _stagger_used: dict = {}  # {(lca, mid_x_bucket): [mid_y]} — keyed by LCA + x-zone so
+    # arcs in different visual lanes (normal left, fault right) don't stagger against each other
     for tr_idx, tr in enumerate(transitions):
         counter[0] += 1
         tv = f't{counter[0]}'
@@ -816,17 +817,29 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
             lca_x, lca_y = (positions[lca][0], positions[lca][1]) if lca and lca in positions else (0, 0)
             if edge_id in edge_routing:
                 er = edge_routing[edge_id]
-                mid_x = _ELK_LABEL_MID_X if label else er['mid_x']
-                mid_y = er['mid_y']
+                dst_leaf = dst_path.rsplit('.', 1)[-1]
+                is_fault_dst = any(kw in dst_leaf.upper() for kw in ('FAULT', 'ERROR'))
+                if is_fault_dst and label:
+                    # Fault state is repositioned to the right column — arc exits right
+                    # side of source (OClock 3), enters left side of fault (OClock 9).
+                    # Both mid_x and mid_y are computed from updated positions (ELK's
+                    # routing used the pre-repositioning location, so er[] is stale here).
+                    mid_x = ((sx + sw) + dx) // 2 - lca_x
+                    src_oc, dst_oc = 3, 9
+                else:
+                    mid_x = _ELK_LABEL_MID_X if label else er['mid_x']
+                    src_oc, dst_oc = er['src_oclock'], er['dst_oclock']
+                mid_y = (((sy + sh // 2) + (dy + dh // 2)) // 2 - lca_y
+                          if is_fault_dst else er['mid_y'])
                 if label:
-                    key = (lca, src_path)
+                    key = (lca, mid_x // 100)  # bucket by x-zone; fault arcs and normal arcs are in separate buckets
                     used = _stagger_used.setdefault(key, [])
                     while any(abs(mid_y - u) < 25 for u in used):
                         mid_y += 25
                     used.append(mid_y)
                 lines.append(f"{tv}.MidPoint = [{mid_x} {mid_y}];")
-                lines.append(f"{tv}.SourceOClock = {er['src_oclock']};")
-                lines.append(f"{tv}.DestinationOClock = {er['dst_oclock']};")
+                lines.append(f"{tv}.SourceOClock = {src_oc};")
+                lines.append(f"{tv}.DestinationOClock = {dst_oc};")
             else:
                 # Fallback: simple side routing
                 src_cx = sx + sw // 2
