@@ -280,8 +280,13 @@ def _oclock_from_point(px: float, py: float,
     return 9
 
 
-def elk_to_stateflow_layout(elk_result: dict) -> Tuple[dict, dict]:
+def elk_to_stateflow_layout(elk_result: dict,
+                             chart_dict: 'dict | None' = None) -> Tuple[dict, dict, dict]:
     """Extract Stateflow layout from ELK result.
+
+    chart_dict: the original chart dict (with 'states' key) used to resolve explicit
+                role: annotations.  When provided, explicit ``role: fault`` in the YAML
+                overrides keyword-based fault detection in _place_fault_states_right().
 
     Returns:
       positions    — {dotted.path: (global_x, global_y, w, h)}
@@ -358,12 +363,27 @@ def elk_to_stateflow_layout(elk_result: dict) -> Tuple[dict, dict]:
 
     collect_edges(elk_result, 0, 0)
 
-    _place_fault_states_right(positions)
+    # Build {full_dotted_path: role} from explicit YAML annotations, if available
+    state_roles: Dict[str, str] = {}
+    if chart_dict:
+        def _collect_roles(states: dict, prefix: str) -> None:
+            for name, body in states.items():
+                path = f'{prefix}.{name}' if prefix else name
+                state_roles[path] = _state_role(name, body)
+                _collect_roles(body.get('states', {}), path)
+        _collect_roles(chart_dict.get('states', {}), '')
 
-    return positions, edge_routing
+    _place_fault_states_right(positions, state_roles)
+
+    fault_junctions = _compute_fault_junctions(
+        positions, state_roles,
+        chart_dict.get('transitions', []) if chart_dict else [])
+
+    return positions, edge_routing, fault_junctions
 
 
-def _place_fault_states_right(positions: dict) -> None:
+def _place_fault_states_right(positions: dict,
+                               state_roles: 'Dict[str, str] | None' = None) -> None:
     """Move fault states to a right-column zone within their compound parent.
 
     Operates in-place on the global positions dict.  For each compound node
@@ -389,8 +409,12 @@ def _place_fault_states_right(positions: dict) -> None:
         if parent_path not in positions:
             continue
 
-        fault_paths  = [p for p in child_paths
-                        if any(kw in p.rsplit('.', 1)[-1].upper() for kw in _FAULT_KEYWORDS)]
+        def _is_fault(path: str) -> bool:
+            if state_roles and path in state_roles:
+                return state_roles[path] == 'fault'
+            return any(kw in path.rsplit('.', 1)[-1].upper() for kw in _FAULT_KEYWORDS)
+
+        fault_paths  = [p for p in child_paths if _is_fault(p)]
         normal_paths = [p for p in child_paths if p not in fault_paths]
         if not fault_paths or not normal_paths:
             continue
@@ -425,3 +449,76 @@ def _place_fault_states_right(positions: dict) -> None:
         new_pw = max(pw, fault_right - px + 20)
         new_ph = content_bottom - py + 20   # trim to content; always >= actual content
         positions[parent_path] = (px, py, new_pw, new_ph)
+
+
+_FAULT_SPINE_OFFSET = 25  # px left of fault state's left edge for junction spine
+
+
+def _compute_fault_junctions(positions: dict, state_roles: dict,
+                              transitions: list) -> dict:
+    """Build a fault-bus junction descriptor for each fault state that has normal-state sources.
+
+    Returns {fault_path: bus} where bus = {
+        'parent':    str,           # immediate parent path of the fault state
+        'spine_x':  int,            # global x of all junction nodes on the spine
+        'entries':  list of {'src': str, 'jy': int},  # sorted ascending by jy
+        'gateway_y': int or None,   # global y of gateway junction; None if an entry is close enough
+    }
+
+    The caller (stateflow.py) uses this to:
+      - emit one Stateflow.Junction per entry + one optional gateway junction
+      - chain junctions vertically (no label)
+      - gateway → fault_state horizontally (DestinationOClock 9)
+      - source → entry_junction (with condition label, SourceOClock 3) instead of source → fault
+    """
+    _GATEWAY_MERGE_TOL = 10  # px: if gateway_y is within this of an entry, reuse that entry
+
+    fault_targets: Dict[str, list] = {}  # {fault_path: [src_path, ...]}
+    for tr in transitions:
+        src = tr.get('from', '')
+        dst = tr.get('to', '')
+        if not src or not dst:
+            continue
+        if state_roles.get(dst) == 'fault' and state_roles.get(src) != 'fault':
+            if src in positions and dst in positions:
+                fault_targets.setdefault(dst, []).append(src)
+
+    result: dict = {}
+    for fault_path, src_list in fault_targets.items():
+        # Deduplicate sources while preserving order
+        seen: set = set()
+        unique_srcs = [s for s in src_list if not (s in seen or seen.add(s))]  # type: ignore[func-returns-value]
+
+        fx, fy, _, fh = positions[fault_path]
+        spine_x  = fx - _FAULT_SPINE_OFFSET
+        gateway_y = fy + fh // 2
+        parent   = fault_path.rsplit('.', 1)[0] if '.' in fault_path else ''
+
+        entries = sorted(
+            [{'src': s, 'jy': positions[s][1] + positions[s][3] // 2} for s in unique_srcs],
+            key=lambda e: e['jy'],
+        )
+
+        # Only build a bus when there are 2+ sources — for a single source a direct
+        # transition is cleaner and the junction nodes add no value.
+        if len(entries) < 2:
+            continue
+
+        # If gateway_y is very close to an existing entry, reuse that entry as the gateway
+        # (avoids a zero-length junction-to-junction connector).
+        # gateway_entry_idx: index into entries[] of the entry that IS the gateway, or None.
+        gateway_entry_idx: 'int | None' = None
+        for i, e in enumerate(entries):
+            if abs(e['jy'] - gateway_y) <= _GATEWAY_MERGE_TOL:
+                gateway_entry_idx = i
+                break
+
+        result[fault_path] = {
+            'parent':            parent,
+            'spine_x':           spine_x,
+            'entries':           entries,
+            'gateway_y':         None if gateway_entry_idx is not None else gateway_y,
+            'gateway_entry_idx': gateway_entry_idx,
+        }
+
+    return result

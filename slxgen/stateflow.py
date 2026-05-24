@@ -545,8 +545,9 @@ def _rebuild_state_label(name: str, actions: Dict[str, str]) -> str:
         code = actions.get(kw, '').strip()
         if code:
             parts.append(f'{kw}:\n{code}')
+    _LAYOUT_KEYS = {'role', 'default', 'state_type', 'subchart'}
     for kw, code in actions.items():
-        if kw not in ('en', 'du', 'ex') and code.strip():
+        if kw not in ('en', 'du', 'ex') and kw not in _LAYOUT_KEYS and isinstance(code, str) and code.strip():
             parts.append(f'{kw}:\n{code.strip()}')
     return '\n'.join(parts)
 
@@ -757,6 +758,7 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
     path_to_var: Dict[str, str] = {}
     positions: Dict[str, tuple] = {}
     edge_routing: dict = {}
+    fault_junctions: dict = {}
     if states_dict:
         if _ELK_AVAILABLE:
             try:
@@ -771,7 +773,8 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
                 elk_json = sf_to_elk_json({'states': states_dict, 'transitions': transitions},
                                           layout_options=_elk_opts, **_elk_kw)
                 elk_result = elk_layout(elk_json)
-                positions, edge_routing = elk_to_stateflow_layout(elk_result)
+                positions, edge_routing, fault_junctions = elk_to_stateflow_layout(
+                    elk_result, {'states': states_dict, 'transitions': transitions})
             except Exception:
                 positions = _compute_sf_layout(states_dict, transitions=transitions)
         else:
@@ -779,6 +782,65 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
         lines.append('')
         lines.append('%% States')
         _sf_states_to_matlab_lines(states_dict, 'ch', '', counter, path_to_var, lines, positions)
+
+    # --- Junction pre-pass: emit Stateflow.Junction nodes and spine connector transitions
+    # Must run AFTER state emission (path_to_var is now populated) and BEFORE transition loop.
+    junction_vars: Dict[str, Dict] = {}  # {fault_path: {'entries': [jv,...], 'gateway': jv}}
+    if fault_junctions:
+        lines.append('')
+        lines.append('%% Fault-bus junctions')
+    for fault_path, bus in fault_junctions.items():
+        parent_var = path_to_var.get(bus['parent'], 'ch')
+        px, py     = positions.get(bus['parent'], (0, 0, 0, 0))[:2]
+
+        entry_jvars: List[str] = []
+        for entry in bus['entries']:
+            counter[0] += 1
+            jv = f"j{counter[0]}"
+            lines += [
+                f"{jv} = Stateflow.Junction({parent_var});",
+                f"{jv}.Position.Center = [{bus['spine_x'] - px} {entry['jy'] - py}];",
+                f"{jv}.Position.Radius = 5;",
+            ]
+            entry_jvars.append(jv)
+
+        if bus['gateway_y'] is not None:
+            counter[0] += 1
+            gv = f"j{counter[0]}"
+            lines += [
+                f"{gv} = Stateflow.Junction({parent_var});",
+                f"{gv}.Position.Center = [{bus['spine_x'] - px} {bus['gateway_y'] - py}];",
+                f"{gv}.Position.Radius = 5;",
+            ]
+        else:
+            gv = entry_jvars[bus['gateway_entry_idx']]  # closest entry is the gateway
+
+        junction_vars[fault_path] = {'entries': entry_jvars, 'gateway': gv}
+
+        # Fan topology: each non-gateway entry connects directly to the gateway junction.
+        # This avoids V-shaped chains when the gateway y-level is between entries.
+        for ev in entry_jvars:
+            if ev == gv:
+                continue
+            counter[0] += 1
+            tv = f"t{counter[0]}"
+            lines += [
+                f"{tv} = Stateflow.Transition({parent_var});",
+                f"{tv}.Source = {ev};",
+                f"{tv}.Destination = {gv};",
+            ]
+
+        # Gateway → fault state (horizontal entry from left)
+        fault_var = path_to_var.get(fault_path, '')
+        if fault_var:
+            counter[0] += 1
+            tv = f"t{counter[0]}"
+            lines += [
+                f"{tv} = Stateflow.Transition({parent_var});",
+                f"{tv}.Source = {gv};",
+                f"{tv}.Destination = {fault_var};",
+                f"{tv}.DestinationOClock = 9;",
+            ]
 
     if transitions:
         lines.append('')
@@ -797,6 +859,37 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
         label = _rebuild_transition_label(
             tr.get('trigger', ''), tr.get('condition', ''), tr.get('action', '')
         )
+
+        # --- Fault-bus junction routing: reroute src → entry_junction instead of src → fault
+        if dst_path in junction_vars and src_path in positions:
+            jbus   = fault_junctions[dst_path]
+            jvinfo = junction_vars[dst_path]
+            idx    = next((i for i, e in enumerate(jbus['entries']) if e['src'] == src_path), None)
+            if idx is not None:
+                entry_jv = jvinfo['entries'][idx]
+                lca_x, lca_y = (positions[lca][0], positions[lca][1]) if lca and lca in positions else (0, 0)
+                sx, sy, sw, sh = positions[src_path]
+                mid_x = (sx + sw - lca_x + jbus['spine_x'] - lca_x) // 2
+                mid_y = sy + sh // 2 - lca_y
+                if label:
+                    key  = (lca, mid_x // 100)
+                    used = _stagger_used.setdefault(key, [])
+                    while any(abs(mid_y - u) < 25 for u in used):
+                        mid_y += 25
+                    used.append(mid_y)
+                lines.append(f"{tv} = Stateflow.Transition({tr_parent_var});")
+                if src_var:
+                    lines.append(f"{tv}.Source = {src_var};")
+                lines.append(f"{tv}.Destination = {entry_jv};")
+                if label:
+                    lines.append(f"{tv}.LabelString = {_matlab_str_literal(label)};")
+                if tr.get('order'):
+                    lines.append(f"{tv}.ExecutionOrder = {tr['order']};")
+                lines.append(f"{tv}.SourceOClock = 3;")
+                lines.append(f"{tv}.MidPoint = [{mid_x} {mid_y}];")
+                continue  # skip normal emit for this transition
+
+        # --- Normal emit
         lines.append(f"{tv} = Stateflow.Transition({tr_parent_var});")
         if src_var:
             lines.append(f"{tv}.Source = {src_var};")
@@ -817,22 +910,11 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
             lca_x, lca_y = (positions[lca][0], positions[lca][1]) if lca and lca in positions else (0, 0)
             if edge_id in edge_routing:
                 er = edge_routing[edge_id]
-                dst_leaf = dst_path.rsplit('.', 1)[-1]
-                is_fault_dst = any(kw in dst_leaf.upper() for kw in ('FAULT', 'ERROR'))
-                if is_fault_dst and label:
-                    # Fault state is repositioned to the right column — arc exits right
-                    # side of source (OClock 3), enters left side of fault (OClock 9).
-                    # Both mid_x and mid_y are computed from updated positions (ELK's
-                    # routing used the pre-repositioning location, so er[] is stale here).
-                    mid_x = ((sx + sw) + dx) // 2 - lca_x
-                    src_oc, dst_oc = 3, 9
-                else:
-                    mid_x = _ELK_LABEL_MID_X if label else er['mid_x']
-                    src_oc, dst_oc = er['src_oclock'], er['dst_oclock']
-                mid_y = (((sy + sh // 2) + (dy + dh // 2)) // 2 - lca_y
-                          if is_fault_dst else er['mid_y'])
+                mid_x = _ELK_LABEL_MID_X if label else er['mid_x']
+                src_oc, dst_oc = er['src_oclock'], er['dst_oclock']
+                mid_y = er['mid_y']
                 if label:
-                    key = (lca, mid_x // 100)  # bucket by x-zone; fault arcs and normal arcs are in separate buckets
+                    key  = (lca, mid_x // 100)
                     used = _stagger_used.setdefault(key, [])
                     while any(abs(mid_y - u) < 25 for u in used):
                         mid_y += 25
