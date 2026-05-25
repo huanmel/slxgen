@@ -220,3 +220,9 @@ __marimo__/
 # Node / elkjs
 node_modules/
 package-lock.json
+
+# Generated outputs (MATLAB scripts, Simulink models, chart exports)
+example/model_gen/*.m
+example/model_gen/*.slx
+example/model_gen/*.png
+work/

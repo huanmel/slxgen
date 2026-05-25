@@ -1,0 +1,211 @@
+# Device Link Controller — reference Stateflow chart example
+#
+# Models a two-channel device controller with startup sequencing,
+# standby management, error handling, and version-mismatch isolation.
+#
+# Hierarchy:
+#   ACTIVE (default)
+#     STARTUP (subchart, default)  — startup/link-establish sequence
+#       FAULT_ACTIVE (fault)
+#       INIT (default)
+#       CONNECTING
+#       READY
+#     ERROR (fault)                — active-level error state
+#     STANDBY (subchart)           — low-power / offline mode
+#       FAULT_ACTIVE (fault)
+#       STANDBY_INIT (default)
+#       STANDBY_SYNC
+#       STANDBY_IDLE
+#   ISOLATED                       — hard isolation after version mismatch
+
+name: DevCtrl_StMach
+
+inputs:
+- name: devStatus
+  type: 'Inherit: Same as Simulink'
+- name: startupTout
+  type: 'Inherit: Same as Simulink'
+- name: faultTout
+  type: 'Inherit: Same as Simulink'
+- name: runCmd
+  type: 'Inherit: Same as Simulink'
+- name: devOnline
+  type: 'Inherit: Same as Simulink'
+- name: versionOk
+  type: 'Inherit: Same as Simulink'
+- name: linkOk
+  type: 'Inherit: Same as Simulink'
+- name: devErr
+  type: 'Inherit: Same as Simulink'
+
+outputs:
+- name: mode_cmd
+  type: 'Inherit: Same as Simulink'
+- name: send_data
+  type: 'Inherit: Same as Simulink'
+- name: state
+  type: 'Inherit: Same as Simulink'
+- name: dev_fault
+  type: 'Inherit: Same as Simulink'
+
+locals:
+- name: hasFault
+  type: boolean
+
+states:
+  ACTIVE:
+    default: true
+    states:
+      STARTUP:
+        default: true
+        subchart: true
+        en: |-
+          mode_cmd=DevMode_e.STARTUP;
+          send_data=true;
+          dev_fault=DevFault_e.NONE;
+          hasFault=false;
+        states:
+          FAULT_ACTIVE:
+            role: fault
+            en: hasFault=true;
+          INIT:
+            default: true
+            en: state=DevState_e.INIT;
+          CONNECTING:
+            en: state=DevState_e.CONNECTING;
+          READY:
+            en: state=DevState_e.READY;
+      ERROR:
+        role: fault
+        en: state=DevState_e.ERROR;
+      STANDBY:
+        subchart: true
+        en: |-
+          mode_cmd=DevMode_e.STANDBY;
+          dev_fault=DevFault_e.NONE;
+          hasFault=false;
+        states:
+          FAULT_ACTIVE:
+            role: fault
+            en: hasFault=true;
+          STANDBY_INIT:
+            default: true
+            en: state=DevState_e.STANDBY_INIT;
+          STANDBY_SYNC:
+            en: state=DevState_e.STANDBY_SYNC;
+          STANDBY_IDLE:
+            en: |-
+              state=DevState_e.STANDBY_IDLE;
+              send_data=false;
+  ISOLATED:
+    en: state=DevState_e.ISOLATED;
+
+transitions:
+
+# --- STARTUP substates ---
+
+- from: ACTIVE.STARTUP.INIT
+  to: ACTIVE.STARTUP.FAULT_ACTIVE
+  trigger: '[count(~devOnline)>startupTout]/'
+  action: dev_fault=DevFault_e.FAULT_LINK_TOUT
+  order: '1'
+
+- from: ACTIVE.STARTUP.INIT
+  to: ACTIVE.STARTUP.CONNECTING
+  condition: devOnline
+  order: '2'
+
+- from: ACTIVE.STARTUP.CONNECTING
+  to: ACTIVE.STARTUP.FAULT_ACTIVE
+  trigger: '[count(devStatus~=DevStatus_e.CONNECTED)>startupTout]/'
+  action: dev_fault=DevFault_e.FAULT_CONNECT_TOUT
+  order: '1'
+
+- from: ACTIVE.STARTUP.CONNECTING
+  to: ACTIVE.STARTUP.READY
+  condition: devStatus==DevStatus_e.CONNECTED
+  order: '2'
+
+- from: ACTIVE.STARTUP.READY
+  to: ACTIVE.STARTUP.FAULT_ACTIVE
+  trigger: '[count(~linkOk)>faultTout]/'
+  action: dev_fault=DevFault_e.FAULT_LINK_LOST
+  order: '1'
+
+- from: ACTIVE.STARTUP.READY
+  to: ACTIVE.STARTUP.FAULT_ACTIVE
+  condition: count(devErr)>faultTout
+  action: dev_fault=DevFault_e.FAULT_DEV_ERR
+  order: '2'
+
+# --- STANDBY substates ---
+
+- from: ACTIVE.STANDBY.STANDBY_INIT
+  to: ACTIVE.STANDBY.FAULT_ACTIVE
+  trigger: '[count(devStatus~=DevStatus_e.STANDBY)>startupTout]/'
+  action: dev_fault=DevFault_e.FAULT_STANDBY_TOUT
+  order: '3'
+
+- from: ACTIVE.STANDBY.STANDBY_INIT
+  to: ACTIVE.STANDBY.STANDBY_IDLE
+  condition: ~devOnline
+  order: '2'
+
+- from: ACTIVE.STANDBY.STANDBY_INIT
+  to: ACTIVE.STANDBY.STANDBY_SYNC
+  condition: devOnline && devStatus==DevStatus_e.STANDBY
+  order: '1'
+
+- from: ACTIVE.STANDBY.STANDBY_SYNC
+  to: ACTIVE.STANDBY.FAULT_ACTIVE
+  trigger: '[count(devOnline)>startupTout]/'
+  action: dev_fault=DevFault_e.FAULT_SYNC_TOUT
+  order: '2'
+
+- from: ACTIVE.STANDBY.STANDBY_SYNC
+  to: ACTIVE.STANDBY.STANDBY_IDLE
+  condition: ~devOnline
+  order: '1'
+
+# --- ACTIVE substates (cross-subchart) ---
+
+- from: ACTIVE.STARTUP
+  to: ACTIVE.STANDBY
+  condition: count(runCmd==false)>startupTout
+  order: '1'
+
+- from: ACTIVE.ERROR
+  to: ACTIVE.STARTUP
+  condition: count(runCmd==true)>faultTout
+  action: hasFault=false;
+  order: '1'
+
+- from: ACTIVE.ERROR
+  to: ACTIVE.STANDBY
+  condition: count(runCmd==false)>faultTout
+  action: hasFault=false;
+  order: '2'
+
+- from: ACTIVE.STANDBY
+  to: ACTIVE.ERROR
+  condition: hasFault
+  order: '2'
+
+- from: ACTIVE.STARTUP
+  to: ACTIVE.ERROR
+  condition: hasFault
+  order: '2'
+
+- from: ACTIVE.STANDBY
+  to: ACTIVE.STARTUP
+  condition: count(runCmd==true)>startupTout
+  order: '1'
+
+# --- Top-level ---
+
+- from: ACTIVE
+  to: ISOLATED
+  trigger: after(startupTout,tick)
+  condition: devOnline && ~versionOk
+  action: dev_fault=DevFault_e.VERSION_MISMATCH
+  order: '1'
