@@ -20,6 +20,7 @@ _LABEL_MAX_WIDTH_PX   = 150  # cap — used only when label_substitution=False
 
 _COMPOUND_HEADER_LINE_H = 16   # px per text line in compound state header (matches stateflow._SF_LABEL_LINE_H)
 _COMPOUND_HEADER_MIN_H  = 30   # minimum top padding (state name only)
+_DEFAULT_TRANSITION_PAD = 40   # extra top padding so default-transition dot fits inside container
 
 
 def _label_size(text: str, max_width: int = _LABEL_MAX_WIDTH_PX) -> Tuple[int, int]:
@@ -125,11 +126,15 @@ def sf_to_elk_json(chart_dict: dict, layout_options: 'dict | None' = None,
 
     def _compound_options(node_direction: str, body: dict) -> dict:
         top_pad = _compound_header_h(body)
+        # States with only a name (no action labels) have a minimal header; add extra room
+        # so the default-transition source dot has space above the first child state.
+        if top_pad <= _COMPOUND_HEADER_MIN_H:
+            top_pad += _DEFAULT_TRANSITION_PAD
         opts = {
             'elk.padding':                                  f'[top={top_pad},right=20,bottom=20,left=20]',
             'elk.direction':                                node_direction,
-            'elk.spacing.nodeNode':                         '50',
-            'elk.layered.spacing.nodeNodeBetweenLayers':    '60',
+            'elk.spacing.nodeNode':                         '20',
+            'elk.layered.spacing.nodeNodeBetweenLayers':    '20',
             'elk.layered.layering.strategy':                'LONGEST_PATH',
             'elk.layered.nodePlacement.strategy':           'LINEAR_SEGMENTS',
             'elk.layered.nodePlacement.alignment':          'CENTER',
@@ -233,8 +238,8 @@ def sf_to_elk_json(chart_dict: dict, layout_options: 'dict | None' = None,
         'elk.algorithm':                                'layered',
         'elk.direction':                                direction,
         'elk.hierarchyHandling':                        'INCLUDE_CHILDREN',
-        'elk.spacing.nodeNode':                         '50',
-        'elk.layered.spacing.nodeNodeBetweenLayers':    '60',
+        'elk.spacing.nodeNode':                         '20',
+        'elk.layered.spacing.nodeNodeBetweenLayers':    '20',
         'elk.layered.layering.strategy':                'LONGEST_PATH',
         'elk.layered.nodePlacement.strategy':           'LINEAR_SEGMENTS',
         'elk.layered.nodePlacement.alignment':          'CENTER',
@@ -260,34 +265,45 @@ def elk_layout(elk_json: dict) -> dict:
     return json.loads(result.stdout)
 
 
-def _oclock_from_point(px: float, py: float,
-                       nx: float, ny: float, nw: float, nh: float) -> int:
-    """Return the Stateflow OClock (0/3/6/9) of the node edge closest to point (px,py).
+def _point_to_oclock(px: float, py: float,
+                     nx: float, ny: float, nw: float, nh: float) -> float:
+    """Convert a point on a node boundary to a Stateflow OClock float (0–12).
 
-    OClock: 0=top, 3=right, 6=bottom, 9=left.
+    0 = top-center, 3 = right-center, 6 = bottom-center, 9 = left-center, clockwise.
+    The point is snapped to the nearest edge before arc-distance is computed.
+    All coordinates are in the same (LCA-local) space.
     """
-    mid_top    = abs(py - ny)
-    mid_bottom = abs(py - (ny + nh))
-    mid_right  = abs(px - (nx + nw))
-    mid_left   = abs(px - nx)
-    best = min(mid_top, mid_bottom, mid_right, mid_left)
-    if best == mid_top:
-        return 0
-    if best == mid_right:
-        return 3
-    if best == mid_bottom:
-        return 6
-    return 9
+    if nw <= 0 or nh <= 0:
+        return 3.0
+    x, y = px - nx, py - ny
+    P = 2.0 * (nw + nh)
+
+    d_top, d_bottom = abs(y), abs(y - nh)
+    d_right, d_left = abs(x - nw), abs(x)
+    d_min = min(d_top, d_bottom, d_right, d_left)
+
+    if d_min == d_top:           # top edge: clockwise right of center, counter-clockwise left
+        x = max(0.0, min(nw, x))
+        arc = (x - nw / 2) if x >= nw / 2 else P - (nw / 2 - x)
+    elif d_min == d_right:       # right edge
+        arc = nw / 2 + max(0.0, min(nh, y))
+    elif d_min == d_bottom:      # bottom edge (right-to-left when clockwise)
+        arc = nw / 2 + nh + (nw - max(0.0, min(nw, x)))
+    else:                        # left edge (bottom-to-top when clockwise)
+        arc = nw / 2 + nh + nw + (nh - max(0.0, min(nh, y)))
+
+    return round((arc / P) * 12, 2)
 
 
 def elk_to_stateflow_layout(elk_result: dict,
                              chart_dict: 'dict | None' = None,
-                             fault_bus_junctions: bool = False) -> Tuple[dict, dict, dict]:
+                             fault_bus_junctions: bool = False,
+                             skip_sink_placement: bool = True) -> Tuple[dict, dict, dict]:
     """Extract Stateflow layout from ELK result.
 
     chart_dict: the original chart dict (with 'states' key) used to resolve explicit
                 role: annotations.  When provided, explicit ``role: fault`` in the YAML
-                overrides keyword-based fault detection in _place_fault_states_right().
+                overrides keyword-based fault detection in _place_sink_states_right().
 
     Returns:
       positions    — {dotted.path: (global_x, global_y, w, h)}
@@ -322,39 +338,33 @@ def elk_to_stateflow_layout(elk_result: dict,
             sections = edge.get('sections', [])
             if not sections:
                 continue
-            sec = sections[0]
+            sec   = sections[0]
             parts = edge_id.split('||')
             src_path = parts[1] if len(parts) > 1 else ''
             dst_path = parts[2] if len(parts) > 2 else ''
 
             start = sec.get('startPoint', {'x': 0, 'y': 0})
             end   = sec.get('endPoint',   {'x': 0, 'y': 0})
-            bends = sec.get('bendPoints', [])
 
-            # MidPoint: middle bend or midpoint of start↔end (LCA-relative, Stateflow-ready)
-            if bends:
-                mid = bends[len(bends) // 2]
-                mid_x = int(mid['x'])
-                mid_y = int(mid['y'])
-            else:
-                mid_x = int((start['x'] + end['x']) / 2)
-                mid_y = int((start['y'] + end['y']) / 2)
+            # Straight midpoint (LCA-relative, Stateflow MidPoint-ready).
+            mid_x = int((start['x'] + end['x']) / 2)
+            mid_y = int((start['y'] + end['y']) / 2)
 
-            # OClocks: compare start/end against source/dest bounds in LCA (this node) space
-            src_oclock = 3
-            dst_oclock = 9
+            # Precise float OClock derived from exact ELK boundary attachment point.
+            src_oclock = 3.0
+            dst_oclock = 9.0
             if src_path in positions:
                 sx, sy, sw, sh = positions[src_path]
-                src_oclock = _oclock_from_point(start['x'], start['y'],
-                                                sx - node_x, sy - node_y, sw, sh)
+                src_oclock = _point_to_oclock(start['x'], start['y'],
+                                              sx - node_x, sy - node_y, sw, sh)
             if dst_path in positions:
                 dx, dy, dw, dh = positions[dst_path]
-                dst_oclock = _oclock_from_point(end['x'], end['y'],
-                                                dx - node_x, dy - node_y, dw, dh)
+                dst_oclock = _point_to_oclock(end['x'], end['y'],
+                                              dx - node_x, dy - node_y, dw, dh)
 
             edge_routing[edge_id] = {
-                'mid_x': mid_x,
-                'mid_y': mid_y,
+                'mid_x':      mid_x,
+                'mid_y':      mid_y,
                 'src_oclock': src_oclock,
                 'dst_oclock': dst_oclock,
             }
@@ -374,7 +384,9 @@ def elk_to_stateflow_layout(elk_result: dict,
                 _collect_roles(body.get('states', {}), path)
         _collect_roles(chart_dict.get('states', {}), '')
 
-    _place_fault_states_right(positions, state_roles)
+    if not skip_sink_placement:
+        _place_sink_states_right(positions, state_roles)
+        _recompute_sink_edge_routing(edge_routing, positions, state_roles)
 
     fault_junctions = (
         _compute_fault_junctions(
@@ -386,21 +398,60 @@ def elk_to_stateflow_layout(elk_result: dict,
     return positions, edge_routing, fault_junctions
 
 
-def _place_fault_states_right(positions: dict,
+def _recompute_sink_edge_routing(edge_routing: dict, positions: dict,
+                                  state_roles: dict) -> None:
+    """Recompute edge routing for transitions into sink/fault states after repositioning.
+
+    _place_sink_states_right() moves fault states to a right column *after* ELK runs,
+    making ELK's original MidPoint and OClock stale.  This replaces them with a direct
+    right→left horizontal route derived from the final (post-move) positions.
+    """
+    def _lca_of(a: str, b: str) -> str:
+        a_parts = a.split('.') if a else []
+        b_parts = b.split('.') if b else []
+        common = []
+        for p, q in zip(a_parts, b_parts):
+            if p == q:
+                common.append(p)
+            else:
+                break
+        return '.'.join(common)
+
+    for edge_id, er in edge_routing.items():
+        parts = edge_id.split('||')
+        if len(parts) < 3:
+            continue
+        src_path, dst_path = parts[1], parts[2]
+        if state_roles.get(dst_path) != 'fault':
+            continue
+        if src_path not in positions or dst_path not in positions:
+            continue
+        sx, sy, sw, sh = positions[src_path]
+        dx, dy, _, dh = positions[dst_path]
+        lca = _lca_of(src_path, dst_path)
+        lca_x, lca_y = positions.get(lca, (0, 0, 0, 0))[:2] if lca else (0, 0)
+
+        er['src_oclock'] = 3.0
+        er['dst_oclock'] = 9.0
+        er['mid_x'] = int((sx + sw + dx) // 2 - lca_x)
+        er['mid_y'] = int(((sy + sh // 2) + (dy + dh // 2)) // 2 - lca_y)
+
+
+def _place_sink_states_right(positions: dict,
                                state_roles: 'Dict[str, str] | None' = None) -> None:
-    """Move fault states to a right-column zone within their compound parent.
+    """Move sink states (fault/error role) to a right-column zone within their compound parent.
 
     Operates in-place on the global positions dict.  For each compound node
-    that has both normal and fault children:
+    that has both normal and sink children:
       - normal children keep their positions
-      - fault children are stacked vertically to the right of the normal bbox,
+      - sink children are stacked vertically to the right of the normal bbox,
         centred on the normal children's vertical midpoint
       - the parent's width is expanded to fit
 
     elk.hierarchyHandling=INCLUDE_CHILDREN prevents ELK partitioning from
     working at the compound level, so we enforce the placement here.
     """
-    _FAULT_ZONE_GAP = 60  # horizontal gap between normal bbox and fault column
+    _SINK_ZONE_GAP = 60  # horizontal gap between normal bbox and sink column
 
     # Build {parent_path: [child_path, ...]} from the dotted names
     parent_children: Dict[str, list] = {}
@@ -430,8 +481,8 @@ def _place_fault_states_right(positions: dict,
         nt = min(positions[p][1]                    for p in normal_paths)  # top
         nb = max(positions[p][1] + positions[p][3]  for p in normal_paths)  # bottom
 
-        fault_x = nr + _FAULT_ZONE_GAP
-        # Stack fault states vertically, centred on normal children
+        fault_x = nr + _SINK_ZONE_GAP
+        # Stack sink states vertically, centred on normal children
         fault_paths_sorted = sorted(fault_paths, key=lambda p: positions[p][1])
         total_h = sum(positions[p][3] for p in fault_paths_sorted)
         gaps_h  = 20 * (len(fault_paths_sorted) - 1)
@@ -498,8 +549,22 @@ def _compute_fault_junctions(positions: dict, state_roles: dict,
         gateway_y = fy + fh // 2
         parent   = fault_path.rsplit('.', 1)[0] if '.' in fault_path else ''
 
+        # Use the near edge of each source state rather than its center, so the entry
+        # junction sits outside the source box rather than overlapping it.  We need the
+        # approximate gateway y first to decide which edge is "near".
+        # Keep _EDGE_GAP small: with nodeNodeBetweenLayers=20 the inter-state gap is only
+        # 20 px, so 15 px would place junctions only 5 px (< radius=5) from the next state.
+        _EDGE_GAP = 8  # px outside the source box so the junction clears the border
+        def _entry_jy(src: str) -> int:
+            _, sy, _, sh = positions[src]
+            src_center_y = sy + sh // 2
+            if src_center_y < gateway_y:
+                return sy + sh + _EDGE_GAP   # source above gateway → just below bottom edge
+            else:
+                return sy - _EDGE_GAP        # source below gateway → just above top edge
+
         entries = sorted(
-            [{'src': s, 'jy': positions[s][1] + positions[s][3] // 2} for s in unique_srcs],
+            [{'src': s, 'jy': _entry_jy(s)} for s in unique_srcs],
             key=lambda e: e['jy'],
         )
 

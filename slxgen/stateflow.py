@@ -1,3 +1,4 @@
+import sys
 import xml.etree.ElementTree as ET
 import math
 import re
@@ -10,6 +11,8 @@ try:
     _ELK_AVAILABLE = True
 except ImportError:
     _ELK_AVAILABLE = False
+
+from slxgen.stateflow_sir import yaml_to_sir, sir_validate, sir_to_chart_dict
 
 # When ELK routing is used, labeled transitions get their MidPoint x overridden to this
 # LCA-relative offset so labels start near the container's left margin and extend rightward
@@ -61,24 +64,36 @@ def _collect_sf_states(children_elem, parent_path: str, depth: int,
 def _parse_transition_label(label: str) -> Dict[str, str]:
     """Split a Stateflow transition label into trigger / condition / action.
 
-    Full format: trigger[condition]{action}
-    Examples:
+    Handles both Stateflow's native /action format and the {action} API format:
+      '[cond]/act'                → trigger='', condition='cond', action='act'
       '[cond]'                    → trigger='', condition='cond', action=''
       '[cond]{act}'               → trigger='', condition='cond', action='act'
-      'after(N,tick)[cond]{act}'  → trigger='after(N,tick)', condition='cond', action='act'
+      'after(N,tick)[cond]/act'   → trigger='after(N,tick)', condition='cond', action='act'
       'evtName'                   → trigger='evtName', condition='', action=''
+
+    The YAML trigger field holds pure Stateflow events (after(), named events).
+    Conditions in [brackets] map to the condition field.
     """
     trigger, condition, action = '', '', ''
-    m = re.match(r'^(.*?)\s*\[([^\]]*)\](?:\s*\{([^}]*)\})?$', label, re.DOTALL)
+    # Primary: handle [condition] followed by /action or {action}
+    m = re.match(
+        r'^(.*?)\s*\[([^\]]*)\]\s*(?:/(.*)|\{([^}]*)\})?$',
+        label.strip(), re.DOTALL,
+    )
     if m:
         trigger   = m.group(1).strip()
         condition = m.group(2).strip()
-        action    = (m.group(3) or '').strip()
+        action    = (m.group(3) or m.group(4) or '').strip()
     else:
-        m2 = re.match(r'^(.*?)\s*\{([^}]*)\}$', label, re.DOTALL)
+        # No condition bracket — try trigger/action or trigger{action}
+        m2 = re.match(r'^(.*?)\s*/(.+)$', label.strip(), re.DOTALL)
+        m3 = re.match(r'^(.*?)\s*\{([^}]*)\}$', label.strip(), re.DOTALL)
         if m2:
             trigger = m2.group(1).strip()
             action  = m2.group(2).strip()
+        elif m3:
+            trigger = m3.group(1).strip()
+            action  = m3.group(2).strip()
         else:
             trigger = label.strip()
     return {'trigger': trigger, 'condition': condition, 'action': action}
@@ -552,16 +567,32 @@ def _rebuild_state_label(name: str, actions: Dict[str, str]) -> str:
     return '\n'.join(parts)
 
 
+_LABEL_WRAP_LEN = 50  # wrap to two lines when trigger+condition+action exceeds this
+
 def _rebuild_transition_label(trigger: str, condition: str, action: str) -> str:
-    """Reconstruct a Stateflow transition LabelString from parsed fields."""
-    parts = []
+    """Reconstruct a Stateflow transition LabelString from parsed fields.
+
+    Action type is signalled by a leading '/' in the action string:
+      action starting with '/'  → transition action  [cond]/action
+      action with no prefix     → condition action   [cond]{action}  (default, safe at junctions)
+
+    Labels longer than _LABEL_WRAP_LEN are split at the action boundary:
+      [count(~devOnline)>startupTout]
+      {dev_fault=DevFault_e.FAULT_LINK_TOUT}
+    """
+    prefix_parts = []
     if trigger:
-        parts.append(trigger)
+        prefix_parts.append(trigger)
     if condition:
-        parts.append(f'[{condition}]')
-    if action:
-        parts.append(f'{{{action}}}')
-    return ''.join(parts)
+        prefix_parts.append(f'[{condition}]')
+    prefix = ''.join(prefix_parts)
+
+    if not action:
+        return prefix
+
+    action_str = action if action.startswith('/') else f'{{{action}}}'
+    sep = '\n' if prefix and len(prefix) + len(action_str) > _LABEL_WRAP_LEN else ''
+    return prefix + sep + action_str
 
 
 def _escape_matlab_str(s: str) -> str:
@@ -678,7 +709,7 @@ def _sf_states_to_matlab_lines(
             _sf_states_to_matlab_lines(children, var, full_path, counter, path_to_var, lines, positions)
 
 
-def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
+def stateflow_dict_to_matlab(chart_dict: Dict, model_name: 'str | None' = None,
                              export_charts: bool = False,
                              elk_options: 'Dict | None' = None) -> str:
     """Generate a MATLAB .m script that recreates a Stateflow chart from a chart dict.
@@ -759,6 +790,8 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
     positions: Dict[str, tuple] = {}
     edge_routing: dict = {}
     fault_junctions: dict = {}
+    orthogonal_junctions: bool = False
+    bare_transitions: bool = False
     if states_dict:
         if _ELK_AVAILABLE:
             try:
@@ -767,6 +800,9 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
                 _label_sub = _elk_opts.pop('__label_substitution__', None)
                 _dir       = _elk_opts.pop('__direction__',           None)
                 _fbus      = _elk_opts.pop('__fault_bus_junctions__', None)
+                _ortho     = _elk_opts.pop('__orthogonal_junctions__', None)
+                _bare_tr   = _elk_opts.pop('__bare_transitions__',     None)
+                _no_fp     = _elk_opts.pop('__no_sink_placement__',    None)
                 _elk_kw: dict = {}
                 if _max_lw    is not None: _elk_kw['max_label_width']    = int(_max_lw)
                 if _label_sub is not None: _elk_kw['label_substitution'] = bool(_label_sub)
@@ -775,8 +811,14 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
                                           layout_options=_elk_opts, **_elk_kw)
                 elk_result = elk_layout(elk_json)
                 _fbus_kw = {'fault_bus_junctions': _fbus.lower() in ('1', 'true', 'yes')} if _fbus is not None else {}
+                _skip_kw: dict = {}
+                if _no_fp is not None:
+                    _skip_kw['skip_sink_placement'] = _no_fp.lower() in ('1', 'true', 'yes')
                 positions, edge_routing, fault_junctions = elk_to_stateflow_layout(
-                    elk_result, {'states': states_dict, 'transitions': transitions}, **_fbus_kw)
+                    elk_result, {'states': states_dict, 'transitions': transitions},
+                    **_skip_kw, **_fbus_kw)
+                orthogonal_junctions = _ortho is not None and _ortho.lower() in ('1', 'true', 'yes')
+                bare_transitions     = _bare_tr is not None and _bare_tr.lower() in ('1', 'true', 'yes')
             except Exception:
                 positions = _compute_sf_layout(states_dict, transitions=transitions)
         else:
@@ -796,6 +838,7 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
         px, py     = positions.get(bus['parent'], (0, 0, 0, 0))[:2]
 
         entry_jvars: List[str] = []
+        entry_jys: List[int] = []   # absolute y for each entry junction (fan OClock direction)
         for entry in bus['entries']:
             counter[0] += 1
             jv = f"j{counter[0]}"
@@ -805,23 +848,26 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
                 f"{jv}.Position.Radius = 5;",
             ]
             entry_jvars.append(jv)
+            entry_jys.append(entry['jy'])
 
         if bus['gateway_y'] is not None:
             counter[0] += 1
             gv = f"j{counter[0]}"
+            gw_y = bus['gateway_y']
             lines += [
                 f"{gv} = Stateflow.Junction({parent_var});",
-                f"{gv}.Position.Center = [{bus['spine_x'] - px} {bus['gateway_y'] - py}];",
+                f"{gv}.Position.Center = [{bus['spine_x'] - px} {gw_y - py}];",
                 f"{gv}.Position.Radius = 5;",
             ]
         else:
             gv = entry_jvars[bus['gateway_entry_idx']]  # closest entry is the gateway
+            gw_y = entry_jys[bus['gateway_entry_idx']]
 
         junction_vars[fault_path] = {'entries': entry_jvars, 'gateway': gv}
 
         # Fan topology: each non-gateway entry connects directly to the gateway junction.
         # This avoids V-shaped chains when the gateway y-level is between entries.
-        for ev in entry_jvars:
+        for ev, ey in zip(entry_jvars, entry_jys):
             if ev == gv:
                 continue
             counter[0] += 1
@@ -831,6 +877,10 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
                 f"{tv}.Source = {ev};",
                 f"{tv}.Destination = {gv};",
             ]
+            if orthogonal_junctions:
+                # Straight vertical spine: same x, just exit toward the gateway
+                src_oc = 6 if ey < gw_y else 12  # exit bottom if above, top if below
+                lines.append(f"{tv}.SourceOClock = {src_oc};")
 
         # Gateway → fault state (horizontal entry from left)
         fault_var = path_to_var.get(fault_path, '')
@@ -843,6 +893,8 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
                 f"{tv}.Destination = {fault_var};",
                 f"{tv}.DestinationOClock = 9;",
             ]
+            if orthogonal_junctions:
+                lines.append(f"{tv}.SourceOClock = 3;")
 
     if transitions:
         lines.append('')
@@ -888,6 +940,10 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
                 if tr.get('order'):
                     lines.append(f"{tv}.ExecutionOrder = {tr['order']};")
                 lines.append(f"{tv}.SourceOClock = 3;")
+                if orthogonal_junctions:
+                    lines.append(f"{tv}.DestinationOClock = 9;")
+                # Always set MidPoint using the geometric midpoint so the label
+                # stays between the source and the junction (not auto-floated).
                 lines.append(f"{tv}.MidPoint = [{mid_x} {mid_y}];")
                 continue  # skip normal emit for this transition
 
@@ -905,7 +961,7 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
             lines.append(f"{tv}.LabelString = {_matlab_str_literal(label)};")
         if tr.get('order'):
             lines.append(f"{tv}.ExecutionOrder = {tr['order']};")
-        if src_path in positions and dst_path in positions:
+        if not bare_transitions and src_path in positions and dst_path in positions:
             sx, sy, sw, sh = positions[src_path]
             dx, dy, dw, dh = positions[dst_path]
             edge_id = f'EDGE||{src_path}||{dst_path}||{tr_idx}'
@@ -913,7 +969,6 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
             if edge_id in edge_routing:
                 er = edge_routing[edge_id]
                 mid_x = _ELK_LABEL_MID_X if label else er['mid_x']
-                src_oc, dst_oc = er['src_oclock'], er['dst_oclock']
                 mid_y = er['mid_y']
                 if label:
                     key  = (lca, mid_x // 100)
@@ -922,8 +977,8 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
                         mid_y += 25
                     used.append(mid_y)
                 lines.append(f"{tv}.MidPoint = [{mid_x} {mid_y}];")
-                lines.append(f"{tv}.SourceOClock = {src_oc};")
-                lines.append(f"{tv}.DestinationOClock = {dst_oc};")
+                lines.append(f"{tv}.SourceOClock = {er['src_oclock']};")
+                lines.append(f"{tv}.DestinationOClock = {er['dst_oclock']};")
             else:
                 # Fallback: simple side routing
                 src_cx = sx + sw // 2
@@ -982,17 +1037,26 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: str = None,
     return '\n'.join(lines) + '\n'
 
 
-def sf_yaml_to_matlab(yaml_path, output_path=None, export_charts: bool = False,
+def sf_yaml_to_matlab(yaml_path, output_path=None, model_name: 'str | None' = None,
+                      export_charts: bool = False,
                       elk_options: 'Dict | None' = None) -> str:
     """Read a Stateflow sf.yaml file and generate a MATLAB script to recreate it.
 
     Returns the script as a string. If output_path is given, also writes it to disk.
+    model_name: override the model/chart name from the YAML (useful for side-by-side comparisons).
     export_charts: if True, the generated script includes inline PNG export at the end.
     elk_options: optional ELK layout option overrides, e.g. {'elk.direction': 'RIGHT'}.
     """
     chart_dict = yaml.safe_load(Path(yaml_path).read_text(encoding='utf-8'))
-    script = stateflow_dict_to_matlab(chart_dict, export_charts=export_charts,
-                                      elk_options=elk_options)
+    sir = yaml_to_sir(chart_dict)
+    issues = sir_validate(sir)
+    if issues:
+        label = Path(yaml_path).name
+        for msg in issues:
+            print(f"[SIR:{label}] {msg}", file=sys.stderr)
+    chart_dict = sir_to_chart_dict(sir)
+    script = stateflow_dict_to_matlab(chart_dict, model_name=model_name,
+                                      export_charts=export_charts, elk_options=elk_options)
     if output_path:
         Path(output_path).write_text(script, encoding='utf-8')
     return script

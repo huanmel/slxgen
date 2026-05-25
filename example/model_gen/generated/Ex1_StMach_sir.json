@@ -1,0 +1,437 @@
+{
+  "sir_version": "0.1.0",
+  "source": "Ex1_StMach_sf.yaml",
+  "model": {
+    "name": "DevCtrl_StMach"
+  },
+  "states": [
+    {
+      "id": "ACTIVE",
+      "name": "ACTIVE",
+      "parent": null,
+      "initial": true,
+      "decomp": "OR",
+      "subchart": false,
+      "role": null,
+      "en": null,
+      "du": null,
+      "ex": null
+    },
+    {
+      "id": "ACTIVE.STARTUP",
+      "name": "STARTUP",
+      "parent": "ACTIVE",
+      "initial": true,
+      "decomp": "OR",
+      "subchart": true,
+      "role": null,
+      "en": "mode_cmd=DevMode_e.STARTUP;\nsend_data=true;\ndev_fault=DevFault_e.NONE;\nhasFault=false;",
+      "du": null,
+      "ex": null
+    },
+    {
+      "id": "ACTIVE.STARTUP.FAULT_ACTIVE",
+      "name": "FAULT_ACTIVE",
+      "parent": "ACTIVE.STARTUP",
+      "initial": false,
+      "decomp": "OR",
+      "subchart": false,
+      "role": "fault",
+      "en": "hasFault=true;",
+      "du": null,
+      "ex": null
+    },
+    {
+      "id": "ACTIVE.STARTUP.INIT",
+      "name": "INIT",
+      "parent": "ACTIVE.STARTUP",
+      "initial": true,
+      "decomp": "OR",
+      "subchart": false,
+      "role": null,
+      "en": "state=DevState_e.INIT;",
+      "du": null,
+      "ex": null
+    },
+    {
+      "id": "ACTIVE.STARTUP.CONNECTING",
+      "name": "CONNECTING",
+      "parent": "ACTIVE.STARTUP",
+      "initial": false,
+      "decomp": "OR",
+      "subchart": false,
+      "role": null,
+      "en": "state=DevState_e.CONNECTING;",
+      "du": null,
+      "ex": null
+    },
+    {
+      "id": "ACTIVE.STARTUP.READY",
+      "name": "READY",
+      "parent": "ACTIVE.STARTUP",
+      "initial": false,
+      "decomp": "OR",
+      "subchart": false,
+      "role": null,
+      "en": "state=DevState_e.READY;",
+      "du": null,
+      "ex": null
+    },
+    {
+      "id": "ACTIVE.ERROR",
+      "name": "ERROR",
+      "parent": "ACTIVE",
+      "initial": false,
+      "decomp": "OR",
+      "subchart": false,
+      "role": "fault",
+      "en": "state=DevState_e.ERROR;",
+      "du": null,
+      "ex": null
+    },
+    {
+      "id": "ACTIVE.STANDBY",
+      "name": "STANDBY",
+      "parent": "ACTIVE",
+      "initial": false,
+      "decomp": "OR",
+      "subchart": true,
+      "role": null,
+      "en": "mode_cmd=DevMode_e.STANDBY;\ndev_fault=DevFault_e.NONE;\nhasFault=false;",
+      "du": null,
+      "ex": null
+    },
+    {
+      "id": "ACTIVE.STANDBY.FAULT_ACTIVE",
+      "name": "FAULT_ACTIVE",
+      "parent": "ACTIVE.STANDBY",
+      "initial": false,
+      "decomp": "OR",
+      "subchart": false,
+      "role": "fault",
+      "en": "hasFault=true;",
+      "du": null,
+      "ex": null
+    },
+    {
+      "id": "ACTIVE.STANDBY.STANDBY_INIT",
+      "name": "STANDBY_INIT",
+      "parent": "ACTIVE.STANDBY",
+      "initial": true,
+      "decomp": "OR",
+      "subchart": false,
+      "role": null,
+      "en": "state=DevState_e.STANDBY_INIT;",
+      "du": null,
+      "ex": null
+    },
+    {
+      "id": "ACTIVE.STANDBY.STANDBY_SYNC",
+      "name": "STANDBY_SYNC",
+      "parent": "ACTIVE.STANDBY",
+      "initial": false,
+      "decomp": "OR",
+      "subchart": false,
+      "role": null,
+      "en": "state=DevState_e.STANDBY_SYNC;",
+      "du": null,
+      "ex": null
+    },
+    {
+      "id": "ACTIVE.STANDBY.STANDBY_IDLE",
+      "name": "STANDBY_IDLE",
+      "parent": "ACTIVE.STANDBY",
+      "initial": false,
+      "decomp": "OR",
+      "subchart": false,
+      "role": null,
+      "en": "state=DevState_e.STANDBY_IDLE;\nsend_data=false;",
+      "du": null,
+      "ex": null
+    },
+    {
+      "id": "ISOLATED",
+      "name": "ISOLATED",
+      "parent": null,
+      "initial": false,
+      "decomp": "OR",
+      "subchart": false,
+      "role": null,
+      "en": "state=DevState_e.ISOLATED;",
+      "du": null,
+      "ex": null
+    }
+  ],
+  "transitions": [
+    {
+      "idx": 0,
+      "source": "ACTIVE.STARTUP.INIT",
+      "target": "ACTIVE.STARTUP.FAULT_ACTIVE",
+      "priority": 1,
+      "condition": "count(~devOnline)>startupTout",
+      "trigger": null,
+      "action": "dev_fault=DevFault_e.FAULT_LINK_TOUT",
+      "action_type": "CONDITION"
+    },
+    {
+      "idx": 1,
+      "source": "ACTIVE.STARTUP.INIT",
+      "target": "ACTIVE.STARTUP.CONNECTING",
+      "priority": 2,
+      "condition": "devOnline",
+      "trigger": null,
+      "action": null,
+      "action_type": "NONE"
+    },
+    {
+      "idx": 2,
+      "source": "ACTIVE.STARTUP.CONNECTING",
+      "target": "ACTIVE.STARTUP.FAULT_ACTIVE",
+      "priority": 1,
+      "condition": "count(devStatus~=DevStatus_e.CONNECTED)>startupTout",
+      "trigger": null,
+      "action": "dev_fault=DevFault_e.FAULT_CONNECT_TOUT",
+      "action_type": "CONDITION"
+    },
+    {
+      "idx": 3,
+      "source": "ACTIVE.STARTUP.CONNECTING",
+      "target": "ACTIVE.STARTUP.READY",
+      "priority": 2,
+      "condition": "devStatus==DevStatus_e.CONNECTED",
+      "trigger": null,
+      "action": null,
+      "action_type": "NONE"
+    },
+    {
+      "idx": 4,
+      "source": "ACTIVE.STARTUP.READY",
+      "target": "ACTIVE.STARTUP.FAULT_ACTIVE",
+      "priority": 1,
+      "condition": "count(~linkOk)>faultTout",
+      "trigger": null,
+      "action": "dev_fault=DevFault_e.FAULT_LINK_LOST",
+      "action_type": "CONDITION"
+    },
+    {
+      "idx": 5,
+      "source": "ACTIVE.STARTUP.READY",
+      "target": "ACTIVE.STARTUP.FAULT_ACTIVE",
+      "priority": 2,
+      "condition": "count(devErr)>faultTout",
+      "trigger": null,
+      "action": "dev_fault=DevFault_e.FAULT_DEV_ERR",
+      "action_type": "CONDITION"
+    },
+    {
+      "idx": 6,
+      "source": "ACTIVE.STANDBY.STANDBY_INIT",
+      "target": "ACTIVE.STANDBY.FAULT_ACTIVE",
+      "priority": 3,
+      "condition": "count(devStatus~=DevStatus_e.STANDBY)>startupTout",
+      "trigger": null,
+      "action": "dev_fault=DevFault_e.FAULT_STANDBY_TOUT",
+      "action_type": "CONDITION"
+    },
+    {
+      "idx": 7,
+      "source": "ACTIVE.STANDBY.STANDBY_INIT",
+      "target": "ACTIVE.STANDBY.STANDBY_IDLE",
+      "priority": 2,
+      "condition": "~devOnline",
+      "trigger": null,
+      "action": null,
+      "action_type": "NONE"
+    },
+    {
+      "idx": 8,
+      "source": "ACTIVE.STANDBY.STANDBY_INIT",
+      "target": "ACTIVE.STANDBY.STANDBY_SYNC",
+      "priority": 1,
+      "condition": "devOnline && devStatus==DevStatus_e.STANDBY",
+      "trigger": null,
+      "action": null,
+      "action_type": "NONE"
+    },
+    {
+      "idx": 9,
+      "source": "ACTIVE.STANDBY.STANDBY_SYNC",
+      "target": "ACTIVE.STANDBY.FAULT_ACTIVE",
+      "priority": 2,
+      "condition": "count(devOnline)>startupTout",
+      "trigger": null,
+      "action": "dev_fault=DevFault_e.FAULT_SYNC_TOUT",
+      "action_type": "CONDITION"
+    },
+    {
+      "idx": 10,
+      "source": "ACTIVE.STANDBY.STANDBY_SYNC",
+      "target": "ACTIVE.STANDBY.STANDBY_IDLE",
+      "priority": 1,
+      "condition": "~devOnline",
+      "trigger": null,
+      "action": null,
+      "action_type": "NONE"
+    },
+    {
+      "idx": 11,
+      "source": "ACTIVE.STARTUP",
+      "target": "ACTIVE.STANDBY",
+      "priority": 1,
+      "condition": "count(runCmd==false)>startupTout",
+      "trigger": null,
+      "action": null,
+      "action_type": "NONE"
+    },
+    {
+      "idx": 12,
+      "source": "ACTIVE.ERROR",
+      "target": "ACTIVE.STARTUP",
+      "priority": 1,
+      "condition": "count(runCmd==true)>faultTout",
+      "trigger": null,
+      "action": "hasFault=false;",
+      "action_type": "CONDITION"
+    },
+    {
+      "idx": 13,
+      "source": "ACTIVE.ERROR",
+      "target": "ACTIVE.STANDBY",
+      "priority": 2,
+      "condition": "count(runCmd==false)>faultTout",
+      "trigger": null,
+      "action": "hasFault=false;",
+      "action_type": "CONDITION"
+    },
+    {
+      "idx": 14,
+      "source": "ACTIVE.STANDBY",
+      "target": "ACTIVE.ERROR",
+      "priority": 2,
+      "condition": "hasFault",
+      "trigger": null,
+      "action": null,
+      "action_type": "NONE"
+    },
+    {
+      "idx": 15,
+      "source": "ACTIVE.STARTUP",
+      "target": "ACTIVE.ERROR",
+      "priority": 2,
+      "condition": "hasFault",
+      "trigger": null,
+      "action": null,
+      "action_type": "NONE"
+    },
+    {
+      "idx": 16,
+      "source": "ACTIVE.STANDBY",
+      "target": "ACTIVE.STARTUP",
+      "priority": 1,
+      "condition": "count(runCmd==true)>startupTout",
+      "trigger": null,
+      "action": null,
+      "action_type": "NONE"
+    },
+    {
+      "idx": 17,
+      "source": "ACTIVE",
+      "target": "ISOLATED",
+      "priority": 1,
+      "condition": "devOnline && ~versionOk",
+      "trigger": "after(startupTout,tick)",
+      "action": "dev_fault=DevFault_e.VERSION_MISMATCH",
+      "action_type": "CONDITION"
+    }
+  ],
+  "variables": [
+    {
+      "name": "devStatus",
+      "scope": "input",
+      "type": null,
+      "initial_value": null
+    },
+    {
+      "name": "startupTout",
+      "scope": "input",
+      "type": "uint8",
+      "initial_value": null
+    },
+    {
+      "name": "faultTout",
+      "scope": "input",
+      "type": "uint8",
+      "initial_value": null
+    },
+    {
+      "name": "runCmd",
+      "scope": "input",
+      "type": "boolean",
+      "initial_value": null
+    },
+    {
+      "name": "devOnline",
+      "scope": "input",
+      "type": "boolean",
+      "initial_value": null
+    },
+    {
+      "name": "versionOk",
+      "scope": "input",
+      "type": "boolean",
+      "initial_value": null
+    },
+    {
+      "name": "linkOk",
+      "scope": "input",
+      "type": "boolean",
+      "initial_value": null
+    },
+    {
+      "name": "devErr",
+      "scope": "input",
+      "type": "boolean",
+      "initial_value": null
+    },
+    {
+      "name": "mode_cmd",
+      "scope": "output",
+      "type": null,
+      "initial_value": null
+    },
+    {
+      "name": "send_data",
+      "scope": "output",
+      "type": "boolean",
+      "initial_value": null
+    },
+    {
+      "name": "state",
+      "scope": "output",
+      "type": null,
+      "initial_value": null
+    },
+    {
+      "name": "dev_fault",
+      "scope": "output",
+      "type": null,
+      "initial_value": null
+    },
+    {
+      "name": "hasFault",
+      "scope": "local",
+      "type": "boolean",
+      "initial_value": null
+    }
+  ],
+  "validation": {
+    "issue_count": 5,
+    "issues": [
+      "WARNING: output variable 'mode_cmd' has no initial_value (uninitialized output risk)",
+      "WARNING: output variable 'send_data' has no initial_value (uninitialized output risk)",
+      "WARNING: output variable 'state' has no initial_value (uninitialized output risk)",
+      "WARNING: output variable 'dev_fault' has no initial_value (uninitialized output risk)",
+      "WARNING: local variable 'hasFault' has no initial_value (uninitialized output risk)"
+    ]
+  }
+}

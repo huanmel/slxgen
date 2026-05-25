@@ -21,32 +21,28 @@
 name: DevCtrl_StMach
 
 inputs:
-- name: devStatus
-  type: 'Inherit: Same as Simulink'
-- name: startupTout
-  type: 'Inherit: Same as Simulink'
+- name: devStatus # datatype inherited from Simulink
+- name: startupTout # datatype inherited from Simulink
+  type: uint8
 - name: faultTout
-  type: 'Inherit: Same as Simulink'
+  type: uint8
 - name: runCmd
-  type: 'Inherit: Same as Simulink'
+  type: boolean
 - name: devOnline
-  type: 'Inherit: Same as Simulink'
+  type: boolean
 - name: versionOk
-  type: 'Inherit: Same as Simulink'
+  type: boolean
 - name: linkOk
-  type: 'Inherit: Same as Simulink'
+  type: boolean
 - name: devErr
-  type: 'Inherit: Same as Simulink'
+  type: boolean
 
 outputs:
 - name: mode_cmd
-  type: 'Inherit: Same as Simulink'
 - name: send_data
-  type: 'Inherit: Same as Simulink'
+  type: boolean
 - name: state
-  type: 'Inherit: Same as Simulink'
 - name: dev_fault
-  type: 'Inherit: Same as Simulink'
 
 locals:
 - name: hasFault
@@ -106,8 +102,8 @@ transitions:
 
 - from: ACTIVE.STARTUP.INIT
   to: ACTIVE.STARTUP.FAULT_ACTIVE
-  trigger: '[count(~devOnline)>startupTout]/'
-  action: dev_fault=DevFault_e.FAULT_LINK_TOUT
+  condition: count(~devOnline)>startupTout
+  action: /dev_fault=DevFault_e.FAULT_LINK_TOUT # Note: leading slash (/) indicates transition action that executes when transition is taken, after condition actions
   order: '1'
 
 - from: ACTIVE.STARTUP.INIT
@@ -117,8 +113,8 @@ transitions:
 
 - from: ACTIVE.STARTUP.CONNECTING
   to: ACTIVE.STARTUP.FAULT_ACTIVE
-  trigger: '[count(devStatus~=DevStatus_e.CONNECTED)>startupTout]/'
-  action: dev_fault=DevFault_e.FAULT_CONNECT_TOUT
+  condition: count(devStatus~=DevStatus_e.CONNECTED)>startupTout
+  action: dev_fault=DevFault_e.FAULT_CONNECT_TOUT # Note: no leading slash (/) indicates condition action that executes when condition is true, but before transition actions
   order: '1'
 
 - from: ACTIVE.STARTUP.CONNECTING
@@ -128,7 +124,7 @@ transitions:
 
 - from: ACTIVE.STARTUP.READY
   to: ACTIVE.STARTUP.FAULT_ACTIVE
-  trigger: '[count(~linkOk)>faultTout]/'
+  condition: count(~linkOk)>faultTout
   action: dev_fault=DevFault_e.FAULT_LINK_LOST
   order: '1'
 
@@ -142,7 +138,7 @@ transitions:
 
 - from: ACTIVE.STANDBY.STANDBY_INIT
   to: ACTIVE.STANDBY.FAULT_ACTIVE
-  trigger: '[count(devStatus~=DevStatus_e.STANDBY)>startupTout]/'
+  condition: count(devStatus~=DevStatus_e.STANDBY)>startupTout
   action: dev_fault=DevFault_e.FAULT_STANDBY_TOUT
   order: '3'
 
@@ -158,7 +154,7 @@ transitions:
 
 - from: ACTIVE.STANDBY.STANDBY_SYNC
   to: ACTIVE.STANDBY.FAULT_ACTIVE
-  trigger: '[count(devOnline)>startupTout]/'
+  condition: count(devOnline)>startupTout
   action: dev_fault=DevFault_e.FAULT_SYNC_TOUT
   order: '2'
 

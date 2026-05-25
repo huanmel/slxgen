@@ -1,459 +1,300 @@
-```markdown
-# Stateflow Design Guidelines (Engineering + Verification + Automation Ready)
+# Stateflow Design Guidelines
+
+**Target Toolchain:** MATLAB / Simulink / Stateflow R2024a  
+**Compliance Frameworks:** ISO 26262-6, MAAB V5.0
+
+---
 
 ## 0. Purpose
 
 This document defines guidelines for designing Stateflow state machines that are:
 
 - consistent and readable
-- maintainable over long lifecycle
+- maintainable over a long lifecycle
 - suitable for testing and debugging
 - traceable to requirements
 - optionally compatible with formal verification
-- suitable for automation (e.g., generation from text / LLM / DSL)
-
-The key idea is:
+- suitable for automation (generation from text, LLM, or DSL)
 
 > One modeling style is not enough — choose a **design level**, but keep a **common structural backbone**.
 
 ---
 
-# 1. Design Philosophy
+## 1. Design Philosophy
 
-## 1.1 State machines are not logic containers
+### 1.1 State machines are not logic containers
 
-A state machine should represent:
+A state machine should represent system **modes**, not detailed algorithmic behavior or procedural sequences.  
+If logic dominates structure, the model is incorrect.
 
-- system **modes**
-- not detailed algorithmic behavior
-- not procedural sequences
+### 1.2 Explicitness over cleverness
 
-If logic dominates structure → model is incorrect.
+Prefer explicit states, explicit transitions, and explicit predicates.  
+Avoid hidden logic in transitions, implicit dependencies, and overloaded conditions.
 
----
+### 1.3 Separation of concerns
 
-## 1.2 Explicitness over cleverness
+Split the model into:
 
-Prefer:
-
-- explicit states
-- explicit transitions
-- explicit predicates
-
-Avoid:
-
-- hidden logic in transitions
-- implicit dependencies
-- overloaded conditions
+- **FSM** — control logic and modes
+- **Predicate layer** — conditions
+- **Time layer** — timing logic
+- **Data layer** — signals and state variables
 
 ---
 
-## 1.3 Separation of concerns
+## 2. Modeling Levels
 
-Split model into:
+Choose intentionally based on project needs.
 
-- **FSM (control logic / modes)**
-- **predicate layer (conditions)**
-- **time layer (timing logic)**
-- **data layer (signals/state variables)**
+### Level 0 — Rapid / readable model
 
----
+For prototypes, internal tools, and non-critical systems.  
+Characteristics: moderate use of temporal operators, simple hierarchy, minimal abstraction.
 
-# 2. Modeling Levels (choose intentionally)
+### Level 1 — Industrial / maintainable model (recommended default)
 
-## Level 0 — Rapid / readable model (default)
+For production control systems and team development.  
+Rules: predicates for complex conditions, limited transition actions, structured timers, shallow hierarchy.
 
-Focus:
-- readability
-- fast development
-- debugging
+### Level 2 — Verification-ready model
 
-Characteristics:
-- moderate use of temporal operators
-- simple hierarchy
-- minimal abstraction layers
+For safety-critical systems requiring formal analysis.  
+Rules: no side effects in transitions, explicit state encoding, bounded variables, minimal AND decomposition, no ambiguous guards.
 
-Use when:
-- prototype
-- internal tools
-- non-critical systems
+### Level 3 — Automation-ready model (LLM / DSL generation)
+
+For machine-generated or model-transformed FSMs.  
+Rules: strict JSON/YAML-compatible structure, no hidden state, standardized predicates, explicit timers, minimal free-form logic.
 
 ---
 
-## Level 1 — Industrial / maintainable model (recommended default)
+## 3. State Design Rules
 
-Focus:
-- long-term maintainability
-- testability
-- traceability
+### 3.1 States must represent stable modes
 
-Rules:
-- predicates used for complex conditions
-- limited transition actions
-- structured timers (mix of `after()` and variables)
-- shallow hierarchy
+A state must be observable in system behavior, stable over time, and semantically meaningful.
 
-Use when:
-- production control systems
-- team development
+| Bad                  | Good      |
+| -------------------- | --------- |
+| `check_sensor`       | `IDLE`    |
+| `increment_counter`  | `RUNNING` |
+| `wait_5ms`           | `FAULT`   |
 
----
+### 3.2 Avoid micro-states
 
-## Level 2 — Verification-ready model
+Do not encode algorithm steps, short computations, or temporary conditions as states.
 
-Focus:
-- formal analysis compatibility
-- deterministic structure
-- bounded behavior
+### 3.3 State naming
 
-Rules:
-- no side effects in transitions
-- explicit state encoding
-- bounded variables
-- minimal AND decomposition
-- no ambiguous guards
+Use UPPER_CASE for modes. Examples: `IDLE`, `ACTIVE`, `FAULT_RECOVERY`.
 
-Use when:
-- safety-critical systems
-- verification required
+### 3.4 State syntax and formatting
+
+Every state label must use explicit action prefixes on their own lines:
+
+```matlab
+entry:
+  variable = value;
+during:
+  output = compute();
+exit:
+  cleanup();
+```
+
+Use 2 spaces of indentation per nesting level. Append an explicit semicolon `;` to every data assignment.
 
 ---
 
-## Level 3 — Automation-ready model (LLM / DSL generation)
+## 4. Transition Design Rules
 
-Focus:
-- machine generation
-- model transformation
-- reproducibility
+### 4.1 Transitions must be deterministic
 
-Rules:
-- strict structure (JSON/YAML-compatible)
-- no hidden state
-- standardized predicates
-- explicit timers
-- minimal free-form logic
+Each transition must have a clear condition, be mutually exclusive with others, and avoid overlap.
 
-Use when:
-- generating Stateflow from text or models
+### 4.2 No side effects in transitions (recommended)
 
----
+Avoid resetting variables, triggering actions, or modifying system state inside transition labels.  
+Prefer entry/exit actions in states instead.
 
-# 3. State Design Rules
+### 4.3 Transition conditions must be simple
 
-## 3.1 States must represent stable modes
+Preferred forms: boolean flags, predicates, simple comparisons.  
+Avoid complex multi-line expressions or embedded algorithmic logic.
 
-A state must be:
+### 4.4 Predicate abstraction rule
 
-- observable in system behavior
-- stable over time
-- semantically meaningful
+If a condition exceeds a complexity threshold, move it into a named predicate:
 
-❌ Bad:
-- “check_sensor”
-- “increment_counter”
-- “wait_5ms”
-
-✔ Good:
-- “IDLE”
-- “RUNNING”
-- “FAULT”
-- “STABILIZING”
-
----
-
-## 3.2 Avoid micro-states
-
-Do NOT encode:
-- steps of an algorithm
-- short computations
-- temporary conditions
-
----
-
-## 3.3 State naming convention
-
-Use:
-
-- UPPER_CASE for modes
-- verb-like names only for actions outside FSM
-
-Example:
-- `IDLE`
-- `ACTIVE`
-- `FAULT_RECOVERY`
-
----
-
-# 4. Transition Design Rules
-
-## 4.1 Transitions must be deterministic
-
-Each transition must:
-
-- have clear condition
-- be mutually exclusive with others (preferred)
-- avoid overlap
-
----
-
-## 4.2 No side effects in transitions (recommended)
-
-❌ Avoid:
-- resetting variables
-- triggering actions
-- modifying system state
-
-✔ Prefer:
-- entry/exit actions in states
-
----
-
-## 4.3 Transition conditions must be simple
-
-Preferred forms:
-
-- boolean flags
-- predicates
-- simple comparisons
-
-Avoid:
-- complex multi-line expressions
-- embedded algorithmic logic
-
-
-## 4.4 Predicate abstraction rule
-
-If condition exceeds complexity threshold:
-
-> move it into named predicate
-
-Example:
-
-
+```text
 isSafeEntry
 isSystemStable
 isFaultResolved
-
-
-
-# 5. State Actions Rules
-
-## 5.1 Entry actions
-
-Use for:
-- initialization
-- reset logic
-- state activation setup
-
----
-
-## 5.2 During actions
-
-Use for:
-- continuous control logic
-- monitoring
-- updates
-
----
-
-## 5.3 Exit actions
-
-Use for:
-- cleanup
-- finalization
-- logging
-
----
-
-## 5.4 Avoid mixing responsibilities
-
-Do not:
-- compute transitions inside actions
-- modify unrelated subsystem state
-
----
-
-# 6. Temporal Logic Guidelines
-
-Stateflow supports:
-
-- `after()`
-- `duration()`
-- `count()`
-
-## 6.1 Acceptable usage
-
-Use temporal operators when:
-
-- logic is local to a state
-- timing is short-term
-- behavior is not safety-critical alone
-
-Example:
 ```
 
-after(2, sec)
-duration(sensor_ok, 5, sec)
+### 4.5 Operator rules
 
+Do **not** use `count()` to track how long a boolean condition has been true — this is not a valid temporal operator for that purpose.  
+Use `duration()` instead:
 
+```matlab
+[duration(devStatus ~= DevStatus_e.STANDBY) > startupTout]
+{dev_fault = DevFault_e.FAULT_STANDBY_TOUT;}
+```
 
-## 6.2 When NOT to use temporal operators
+### 4.6 Condition actions vs. transition actions
 
-Avoid when:
+Condition actions execute immediately when the condition is true and are safe at junctions.  
+Transition actions execute only when the destination is confirmed; do not use them before a junction.
 
-- timing is part of safety decision
-- timing must be observable externally
-- timing is reused across states
+Syntax summary:
 
----
+| Form               | Syntax                   |
+| ------------------ | ------------------------ |
+| Condition action   | `[condition]{action;}`   |
+| Transition action  | `[condition]/action;`    |
 
-## 6.3 Hybrid rule (recommended)
+Never combine both forms on the same transition segment (`[condition]/{ action }` is invalid).
 
-Critical timing logic should be:
+### 4.7 Junction topology and syntax mapping
 
-- optionally duplicated as explicit signal
-- or exposed for observability
+| Topology                          | Allowed                                   | Prohibited                    | Reason                                                         |
+| --------------------------------- | ----------------------------------------- | ----------------------------- | -------------------------------------------------------------- |
+| State → Junction                  | Condition action: `[cond]{action;}`       | Transition action: `/action`  | Prevents backtracking side effects if downstream branches fail |
+| Junction → State (final segment)  | Both forms allowed                        | —                             | Destination is finalized; no backtracking risk                 |
+| Direct State → State              | Both forms allowed                        | —                             | No alternative routing branches exist                          |
 
----
+### 4.8 Default transitions
 
-# 7. Timer Design Rules
-
-## 7.1 Two acceptable timer styles
-
-### Style A — Native Stateflow timers
-- `after()`, `duration()`, `count()`
-- compact and efficient
-
-### Style B — Explicit timers (state variables)
-- `timer += dt`
-- fully observable and testable
-
----
-
-## 7.2 Selection guideline
-
-| Use case | Preferred |
-|----------|----------|
-| local FSM logic | Stateflow timers |
-| safety / diagnostics | explicit timers |
-| formal verification | explicit timers |
-| automation pipelines | explicit timers |
+Every exclusive (OR) state container must have a default transition. It must point directly to the initial active state, not to a junction.
 
 ---
 
-# 8. Hierarchy Rules
+## 5. State Actions Rules
 
-## 8.1 Keep hierarchy shallow
+| Action      | Use for                                         |
+| ----------- | ----------------------------------------------- |
+| `entry:`    | initialization, reset logic, activation setup   |
+| `during:`   | continuous control logic, monitoring, updates   |
+| `exit:`     | cleanup, finalization, logging                  |
 
-Recommended:
-- max 2–3 levels
-
----
-
-## 8.2 OR decomposition (default)
-
-Use when:
-- modes are mutually exclusive
+Do not compute transitions inside actions or modify unrelated subsystem state.
 
 ---
 
-## 8.3 AND decomposition (restricted)
+## 6. Temporal Logic and Timer Rules
 
-Use only when:
-- subsystems are truly independent
+Stateflow supports: `after()`, `duration()`, `count()`.
 
-Avoid:
-- coupling orthogonal regions
+### 6.1 When to use temporal operators
+
+Use when logic is local to a state, timing is short-term, and behavior is not safety-critical alone.
+
+### 6.2 When NOT to use temporal operators
+
+Avoid when timing is part of a safety decision, must be observable externally, or is reused across states.
+
+### 6.3 Timer style selection
+
+| Use case              | Preferred style                              |
+| --------------------- | -------------------------------------------- |
+| Local FSM logic       | Stateflow native (`after()`, `duration()`)   |
+| Safety / diagnostics  | Explicit variable timer (`timer += dt`)      |
+| Formal verification   | Explicit variable timer                      |
+| Automation pipelines  | Explicit variable timer                      |
+
+Critical timing logic should optionally be duplicated as an explicit signal for observability.
 
 ---
 
-# 9. History Junction Rules
+## 7. Hierarchy Rules
 
-## 9.1 Use sparingly
-
-Use only when:
-
-- requirement explicitly demands resume behavior
+- Keep hierarchy shallow: maximum 2–3 levels.
+- If a substate requires high complexity, refactor it into a separate atomic subchart.
+- OR decomposition is the default (mutually exclusive modes).
+- AND decomposition is restricted: use only when subsystems are truly independent, and avoid coupling orthogonal regions.
 
 ---
 
-## 9.2 Avoid when:
+## 8. History Junction Rules
+
+Use history junctions only when a requirement explicitly demands resume behavior.
+
+Avoid them when:
 
 - behavior must be deterministic and analyzable
 - system is safety-critical
+- the junction would be placed inside a parallel (AND) state
 
 ---
 
-# 10. Data Handling Rules
+## 9. Data Handling Rules
 
-## 10.1 Avoid implicit state
+### 9.1 No implicit state
 
-All memory must be explicit via:
+All memory must be explicit via states, variables, timers, or controlled history use.
 
-- states
-- variables
-- timers
-- history (controlled use only)
+### 9.2 Bound all variables
 
----
+Saturate counters, avoid unbounded growth, and avoid unconstrained floats in FSM logic.
 
-## 10.2 Bound all variables
+### 9.3 Strong data typing
 
-- saturate counters
-- avoid unbounded growth
-- avoid unconstrained floats in FSM logic
+Explicitly assign a rigid data type (`boolean`, `single`, `int32`, etc.) to all data objects.  
+Never allow implicit type inheritance from a Simulink bus.
 
----
+### 9.4 No event broadcasting
 
-# 11. Testing & Debuggability
+Do not use directed event broadcasting (`send`). Cross-state interactions must use data-driven flags.
 
-## 11.1 Each state must be testable
+### 9.5 Parallel state execution order
 
-Define:
-
-- entry condition
-- exit condition
-- expected invariants
+Parallel (AND) states must have their `ExecutionOrder` property manually sequenced (1, 2, 3…). Do not allow implicit ordering.
 
 ---
 
-## 11.2 Transition coverage
+## 10. Layout and Geometry
 
-Ensure:
-
-- all transitions are reachable
-- no dead states exist
-- no hidden transitions
-
----
-
-# 12. Requirements Traceability
-
-Each element should map to requirement IDs:
-
-- States → system modes requirements
-- Transitions → behavior requirements
-- Predicates → condition requirements
-- Timers → timing requirements
-
-Example:
-```
-
-RUNNING [REQ-12]
-IDLE -> RUNNING [REQ-15]
-isSafeEntry [REQ-22]
-
-````
+- **Grid:** use a 40 px base grid.
+- **Flow direction:** left-to-right or top-to-bottom consistently.
+- **Spacing:** minimum 80 px horizontal, 60 px vertical between objects.
+- **State size:** minimum 160 × 80 px; scale width to fit the longest text line plus 20 px padding.
+- **Junction alignment:** junctions forming if/else cascades must align on a straight horizontal or vertical line.
+- **Transition lines:** must not route under or intersect unrelated states or junctions.
+- **Transition labels:** place at the midpoint of the transition line, offset 15 px to avoid overlap with the line.
 
 ---
 
-# 13. Automation / LLM Compatibility Rules
+## 11. Testing and Debuggability
 
-To enable FSM generation from text:
+### 11.1 Each state must be testable
 
-## 13.1 Use structured abstraction
+Define entry condition, exit condition, and expected invariants for every state.
 
-Preferred intermediate format:
+### 11.2 Transition coverage
+
+Ensure all transitions are reachable, no dead states exist, and no hidden transitions are present.
+
+---
+
+## 12. Requirements Traceability
+
+Map each model element to a requirement ID:
+
+| Element      | Requirement category       |
+| ------------ | -------------------------- |
+| States       | System mode requirements   |
+| Transitions  | Behavioral requirements    |
+| Predicates   | Condition requirements     |
+| Timers       | Timing requirements        |
+
+Example annotation: `RUNNING [REQ-12]`, `IDLE -> RUNNING [REQ-15]`
+
+---
+
+## 13. Automation and LLM Compatibility
+
+Use a structured intermediate format compatible with JSON/YAML:
 
 ```json
 {
@@ -462,88 +303,228 @@ Preferred intermediate format:
   "predicates": [],
   "timers": []
 }
-````
+```
+
+Rules:
+
+- All transition conditions must reference predicates, simple signals, or timer outputs — no free-form logic.
+- Structure must be deterministic: no ambiguous transitions, no implicit priorities, no hidden state.
 
 ---
 
-## 13.2 No free-form logic in transitions
+## 14. Formal Verification Compatibility (optional)
 
-All conditions must reference:
+Required conditions:
 
-* predicates
-* simple signals
-* timer outputs
+- finite state space
+- deterministic transitions
+- bounded variables
+- no side effects in guards
 
----
+Preferred characteristics:
 
-## 13.3 Deterministic structure required
-
-* no ambiguous transitions
-* no implicit priorities
-* no hidden state
-
----
-
-# 14. Formal Verification Compatibility (optional layer)
-
-If required:
-
-## 14.1 Must be true:
-
-* finite state space
-* deterministic transitions
-* bounded variables
-* no side effects in guards
+- explicit timers
+- shallow hierarchy
+- no history junctions
+- minimal AND decomposition
 
 ---
 
-## 14.2 Prefer:
+## 15. Recommended Architecture
 
-* explicit timers
-* shallow hierarchy
-* no history junctions
-* minimal AND decomposition
-
----
-
-# 15. Recommended Default Architecture
-
-Most robust pattern:
-
-### Layer 1: FSM (Stateflow)
-
-* system modes only
-
-### Layer 2: Predicates (Simulink / functions)
-
-* semantic conditions
-
-### Layer 3: Timing layer
-
-* hybrid (Stateflow + optional explicit signals)
-
-### Layer 4: Monitoring / safety supervisor
-
-* optional second FSM
+| Layer                                  | Content                                              |
+| -------------------------------------- | ---------------------------------------------------- |
+| 1 — FSM (Stateflow)                    | System modes only                                    |
+| 2 — Predicates (Simulink / functions)  | Semantic conditions                                  |
+| 3 — Timing layer                       | Hybrid: Stateflow timers + optional explicit signals |
+| 4 — Safety supervisor (optional)       | Second FSM for monitoring                            |
 
 ---
 
-# 16. Final Principle
+## 16. Predicate Computation Patterns
+
+Predicates can live in three places. The choice affects observability, testability, and correctness with temporal operators.
+
+### 16.1 Inline in transition condition
+
+```matlab
+[duration(devStatus ~= DevStatus_e.STANDBY) > startupTout]
+```
+
+- Evaluated only when the transition is being checked.
+- No intermediate variable; cannot be logged in the Data Inspector.
+- Preferred when the predicate is used in exactly one place and debugging is not a concern.
+
+### 16.2 Computed in `during:` action (observable predicate)
+
+```matlab
+during:
+    isStartupTimedOut =
+        duration(devStatus ~= DevStatus_e.STANDBY) > startupTout;
+```
+
+Then used as `[isStartupTimedOut]` on the outgoing transition.
+
+- The variable is visible and loggable in simulation.
+- Evaluated once per chart tick while the state is active.
+- **Important:** the temporal operator's clock belongs to the chart, not the variable. Assigning the result to a boolean does not give the predicate its own reset point. The clock resets on chart reset or first activation, not on assignment. Use `duration()` with this understanding, and verify the reset behaviour matches requirements.
+- Do not use this pattern as a substitute for understanding temporal scope.
+
+### 16.3 Local MATLAB function (pure logic only)
+
+```matlab
+function result = isCommHealthy(commAge, threshold)
+    result = commAge > threshold;
+end
+```
+
+- Reusable across states; unit-testable outside the chart.
+- **Temporal operators (`after()`, `duration()`, `count()`) are illegal inside MATLAB functions.** Any predicate that involves timing must remain in chart context (options 16.1 or 16.2).
+
+### 16.4 Selection guideline
+
+| Predicate type                    | Recommended placement              |
+| --------------------------------- | ---------------------------------- |
+| Pure logic, single use            | Inline in transition               |
+| Pure logic, reused or unit-tested | Local MATLAB function              |
+| Temporal, debugging needed        | `during:` action (chart context)   |
+| Temporal, formal verification     | Inline in transition               |
+
+---
+
+## 17. Fault Output Assignment Patterns
+
+When multiple states can transition to a common FAULT state with different fault codes, two patterns are available.
+
+### Pattern A — Direct condition action (recommended)
+
+Assign the fault output directly in the condition action on each transition. Direct State → State transitions permit condition actions (see section 4.7).
+
+```matlab
+[isStartupTimedOut]
+{dev_fault = DevFault_e.FAULT_STANDBY_TOUT;}
+```
+
+```text
+↓
+
+FAULT
+```
+
+- The fault code is assigned at the exact point where the cause is known.
+- No additional variables required.
+- Safe for all entry paths to FAULT, including future ones added by refactoring.
+- Fault assignment is distributed across transitions — acceptable when each transition has a single, clear cause.
+
+### Pattern B — Fault context variable (use with caution)
+
+Set an intermediate variable in each transition condition action; assign the output in FAULT entry.
+
+```matlab
+% transition condition action:
+[isStartupTimedOut]
+{fault_context = DevFault_e.FAULT_STANDBY_TOUT;}
+```
+
+```text
+↓
+
+FAULT
+
+entry:
+    dev_fault = fault_context;
+```
+
+- Output assignment is in one place, which is useful if FAULT entry needs to branch on fault type for additional initialization.
+- **Risks:**
+  - `fault_context` must be initialized to a valid value at chart startup; an uninitialized value produces a silent wrong output.
+  - Any code path that reaches FAULT without first setting `fault_context` (a safety supervisor, a future transition) will silently forward a stale or default code.
+  - The transition and FAULT entry are implicitly coupled and must be kept synchronized.
+
+**Rule:** use Pattern A by default. Use Pattern B only if FAULT entry must branch on fault type for initialization, and only when all entry paths to FAULT are explicitly enumerated and reviewed.
+
+---
+
+## 18. YAML-to-Stateflow Code Generation (slxgen)
+
+### 18.1 Overview
+
+`slxgen` converts a YAML state-machine description into a MATLAB script that builds a Stateflow chart programmatically. It uses **ELK** (Eclipse Layout Kernel) to compute state positions and transition routing before emitting MATLAB. The generated script is self-contained and reproducible.
+
+### 18.2 Layout pipeline
+
+1. **ELK layout** — computes node positions and edge routes. States are layered top-to-bottom (DOWN direction). The init state goes to the first layer; sink states (fault/error role) get `layerConstraint=LAST`.
+2. **Sink-state repositioning** — after ELK runs, states with role `fault` (or names containing `FAULT`/`ERROR`) are moved to a right column within their compound parent. ELK places them at the bottom row (last layer in DOWN direction); the right-column convention requires post-processing.
+3. **Edge routing recompute** — after repositioning, transition geometry to sink states is recalculated using final positions, giving accurate OClock 3 → 9 (right-exit, left-entry) horizontal routing.
+4. **Precise OClock** — all non-sink transitions use float OClock values derived from ELK's exact boundary attachment point (arc-distance on perimeter, 0–12 clock face). This replaces the old 4-value cardinal snap.
+
+### 18.3 Sink-state concept
+
+The "sink state" concept is topological, not semantic: any state that collects many incoming transitions from sibling states benefits from right-column placement to keep transition lines short and readable. The `role: fault` annotation in the YAML is the mechanism to declare a state as a sink, but the concept generalises to any exception / consolidation state.
+
+### 18.4 Available elk_options
+
+Pass as `elk_options` dict to `sf_yaml_to_matlab()`:
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `__fault_bus_junctions__` | `false` | Route sink transitions through a vertical junction bus spine |
+| `__orthogonal_junctions__` | `false` | Strict H/V spine routing (requires `fault_bus_junctions=true`) |
+| `__direction__` | `DOWN` | ELK layout direction for normal states |
+| `__max_label_width__` | `150` | Pixel cap for transition label width estimation |
+| `__label_substitution__` | `true` | Replace long labels with short identifiers for ELK sizing |
+| `__bare_transitions__` | `false` | Skip all transition geometry (diagnostic — Stateflow auto-routes) |
+| `__no_sink_placement__` | `true` | Skip post-ELK sink repositioning — pure ELK output (default). Set `false` to enable right-column sink repositioning. |
+
+### 18.5 Recommended configuration
+
+**Default — pure ELK arc routing:**
+
+```python
+sf_yaml_to_matlab(yaml_path, elk_options={})
+```
+
+Produces curved arcs with precise float OClock entry/exit points derived from ELK boundary coordinates. ELK output is used as-is with no post-processing. Suitable for all charts.
+
+**Optional — sink right-column repositioning:**
+
+```python
+sf_yaml_to_matlab(yaml_path, elk_options={'__no_sink_placement__': 'false'})
+```
+
+After ELK runs, states with `role: fault` (or names containing `FAULT`/`ERROR`) are moved to a right column within their parent container and transition geometry is recomputed. Useful when fault states collect many incoming transitions and right-column placement improves readability.
+
+**Experimental — fault-bus junction spine (not yet recommended for production):**
+
+```python
+sf_yaml_to_matlab(yaml_path, elk_options={
+    '__fault_bus_junctions__': 'true',
+    '__orthogonal_junctions__': 'true',
+})
+```
+
+Produces a vertical junction spine to the left of each sink state. Known issue: source states positioned *below* the gateway junction produce an upward fan arc instead of a straight horizontal segment. Deferred until geometry is improved.
+
+### 18.6 Layout limitations (known, deferred)
+
+- **State box sizing** is estimated from character counts; multi-line action text can produce slightly undersized boxes. Manual `width`/`height` overrides in the YAML are the workaround until the estimator is improved.
+- **Transition label placement** uses a fixed left-margin offset (`_ELK_LABEL_MID_X`) for ELK-routed transitions with labels; this prevents labels from overflowing the container but may overlap dense transitions.
+- **READY-below-sink edge case** in the junction bus topology: when a source state is positioned below the gateway junction, the fan connector creates an upward arc instead of a straight horizontal. Functional but not perfectly orthogonal. Deferred.
+
+---
+
+## 19. Closing Principle
 
 > A good Stateflow model is not the one that is most compact,
 > but the one that is **most predictable, testable, and transformable into other representations**.
 
 ---
 
-# End of Guidelines
+## References
 
-```
-
-If you want, next step I can extend this into:
-
-- :contentReference[oaicite:0]{index=0}
-- or :contentReference[oaicite:1]{index=1}
-- or :contentReference[oaicite:2]{index=2}
-
-All three are directly aligned with your automation goal.
-```
+1. Planning Model Architecture for ISO 26262 Compliance — <https://www.scribd.com/document/655978540/>
+2. MathWorks Stateflow User's Guide — <https://www.mathworks.com/help/pdf_doc/stateflow/stateflow_ug.pdf>
+3. MathWorks Stateflow Best Practices (GE) — <https://www.mathworks.com/content/dam/mathworks/mathworks-dot-com/campaigns/portals/files/general-electric/stateflow-best-practices.pdf>
+4. MathWorks Modeling Guidelines for State Charts — <https://www.mathworks.com/help/stateflow/ug/modeling-guidelines-for-state-charts.html>
+5. ISO 26262 Workflow for Automated Driving — <https://www.mathworks.com/company/technical-articles/an-iso-26262-workflow-for-automated-driving-applications-using-matlab-guidelines-and-best-practices.html>
+6. Best Practices for AUTOSAR Classic and ISO 26262 — <https://www.mathworks.com/content/dam/mathworks/white-paper/best-practices-for-targeting-autosar-classic-and-iso-26262-with-simulink.pdf>

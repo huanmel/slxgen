@@ -1,0 +1,12 @@
+name: py311_slxgen
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pyyaml
+  - ipython          # optional: interactive use
+  - pip
+  - pip:
+    - matlabengine==24.1.4
+    - -e .             # install slxgen in editable mode

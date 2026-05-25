@@ -522,6 +522,13 @@ python work/test_elk_variants.py --log results.csv         # cross-model CSV
   the stacked-label problem and improve fault-transition routing.
 - **ELK template patterns**: detect common FSM topologies (linear chain, hub-and-spoke,
   fault-tolerant chain) and apply pre-tuned layout constraints per pattern.
+- **SIR normalization layer** (`docs/sir_notes.md`, `slxgen/stateflow_sir.py`): Phases
+  1–2 complete. `yaml_to_sir()` normalizes YAML into a flat typed graph; `sir_validate()`
+  runs 7 structural checks; `sir_to_chart_dict()` converts back to nested dict so the
+  existing codegen is unchanged. SIR is now the authoritative source for generation.
+  Next: Phase 3 — Mermaid diagram output from `SIRModel` (~50 LOC, proves multi-target).
+  Phase 4: YAML auto-normalization. Phase 5: predicate/timer extraction as SIR transforms;
+  `sir_to_chart_dict()` handles the translation — `stateflow_dict_to_matlab()` stays frozen.
 
 ---
 
