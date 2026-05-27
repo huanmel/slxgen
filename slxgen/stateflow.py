@@ -684,13 +684,15 @@ def _emit_sf_default_transition(
     counter: List[int],
     lines: List[str],
     is_auto: bool = False,
-    src_pos: 'tuple | None' = None,
+    dst_pos: 'tuple | None' = None,
 ) -> None:
     """Emit a Stateflow default transition (no source) pointing to dst_var.
 
-    src_pos: (rel_x, rel_y, w, h) of the destination state in the parent's
-    coordinate space.  When provided, the source dot is placed explicitly so it
-    stays inside the parent box (y ≥ 2) rather than floating above it.
+    dst_pos: (x, y, w, h) of the destination state in the coordinate space that
+    Stateflow uses for SourceEndPoint on this transition — chart-absolute for
+    non-subchart transitions, subchart-relative for transitions inside a subchart.
+    When provided, places the dot 20 px above the destination state's top edge so
+    it renders inside the parent container rather than at the canvas top-left.
     """
     counter[0] += 1
     tv = f't{counter[0]}'
@@ -699,16 +701,13 @@ def _emit_sf_default_transition(
     lines.append(f"{tv} = Stateflow.Transition({parent_var});")
     lines.append(f"{tv}.Destination = {dst_var};")
     lines.append(f"{tv}.DestinationOClock = 0;")
-    if src_pos is not None:
-        rx, ry, rw, _ = src_pos
-        dot_x = rx + rw // 2
-        dot_y = max(ry - 20, 2)        # 20 px above state top, always inside parent
-        mid_y = (dot_y + ry) // 2
+    if dst_pos is not None:
+        x, y, w, h = dst_pos
+        dot_x = x + w // 2
+        dot_y = max(y - 20, 0)
+        mid_y = (dot_y + y) // 2
         lines.append(f"{tv}.SourceEndPoint = [{dot_x} {dot_y}];")
         lines.append(f"{tv}.MidPoint = [{dot_x} {mid_y}];")
-    else:
-        lines.append(f"{tv}.SourceEndPoint = {tv}.DestinationEndpoint + [0 -30];")
-        lines.append(f"{tv}.MidPoint = {tv}.DestinationEndpoint + [0 -15];")
 
 
 def _sf_states_to_matlab_lines(
@@ -758,12 +757,12 @@ def _sf_states_to_matlab_lines(
         lines.append(f"{var}.LabelString = {_matlab_str_literal(label)};")
         if full_path in positions:
             x, y, w, h = positions[full_path]
-            # Inside a subchart all Position values are subchart-absolute (relative to
-            # the subchart's origin).  At chart level they are parent-relative.
+            # Stateflow.State.Position is always chart-absolute for non-subchart states.
+            # Only states that are direct children of a subchart use subchart-relative coords.
+            # All other states (chart-level AND children of non-subchart compounds) must use
+            # chart-absolute coords so Stateflow places them correctly in the visual hierarchy.
             if _subchart_path and _subchart_path in positions:
                 px, py = positions[_subchart_path][0], positions[_subchart_path][1]
-            elif path_prefix and path_prefix in positions:
-                px, py = positions[path_prefix][0], positions[path_prefix][1]
             else:
                 px, py = 0, 0
             lines.append(f"{var}.Position = [{x - px} {y - py} {w} {h}];")
@@ -775,19 +774,15 @@ def _sf_states_to_matlab_lines(
             lines.append(f"{var}.Decomposition = 'PARALLEL_AND';")
 
         if state_name == default_child_name:
-            _src_pos = None
-            if full_path in positions:
-                _x, _y, _w, _h = positions[full_path]
-                if _subchart_path and _subchart_path in positions:
-                    _px, _py = positions[_subchart_path][:2]
-                elif path_prefix and path_prefix in positions:
-                    _px, _py = positions[path_prefix][:2]
-                else:
-                    _px, _py = 0, 0
-                _src_pos = (_x - _px, _y - _py, _w, _h)
+            dst_abs = positions.get(full_path)
+            if dst_abs is not None and _subchart_path and _subchart_path in positions:
+                sc_x, sc_y = positions[_subchart_path][0], positions[_subchart_path][1]
+                dst_coord = (dst_abs[0] - sc_x, dst_abs[1] - sc_y, dst_abs[2], dst_abs[3])
+            else:
+                dst_coord = dst_abs
             _emit_sf_default_transition(var, parent_var, counter, lines,
                                         is_auto=not has_explicit_default,
-                                        src_pos=_src_pos)
+                                        dst_pos=dst_coord)
 
         children = state_body.get('states', {})
         if children:

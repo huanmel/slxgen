@@ -21,6 +21,7 @@ YAML = Path(__file__).parent / 'Ex1_StMach_sf.yaml'
 run_pipeline(
     YAML,
     model_name='DevCtrl_StMach',
+    dump_sir=True,       # write intermediate SIR JSON for debugging
     run_matlab=True,        # False  → only write the .m script, no MATLAB needed
     session_name='slxgen',  # shared session name (created if no session found)
     open_desktop=False,     # True   → open full MATLAB GUI when starting new engine

@@ -1,6 +1,6 @@
 """High-level pipeline entry point for slxgen.
 
-Wraps validate → generate → (optional) MATLAB run → (optional) sfLint
+Wraps validate -> generate -> (optional) MATLAB run -> (optional) sfLint
 into a single call.  The MATLAB Engine is left running after use so the
 next call can reconnect to the shared session instead of starting cold.
 
@@ -20,11 +20,11 @@ import io
 import json
 import yaml
 
-from .stateflow_sir import yaml_to_sir, sir_validate
+from .stateflow_sir import yaml_to_sir, sir_validate, sf_yaml_to_sir_json
 from .stateflow import sf_yaml_to_matlab as _sf_yaml_to_matlab
 
 _MATLAB_SCRIPTS = Path(__file__).parent / 'matlab'
-_SEP = '─' * 60
+_SEP = '-' * 60
 _SESSION_TIP = "Tip: open MATLAB and run  matlab.engine.shareEngine('{name}')  for a persistent session."
 
 
@@ -37,6 +37,7 @@ def run_pipeline(
     yaml_path,
     out_dir=None,
     model_name=None,
+    dump_sir=False,
     run_matlab=False,
     session_name='slxgen',
     open_desktop=False,
@@ -54,6 +55,9 @@ def run_pipeline(
         Output directory.  Defaults to ``<yaml_path.parent>/generated``.
     model_name : str | None
         Simulink model name.  Defaults to the YAML file stem.
+    dump_sir : bool
+        Write the SIR to ``<out_dir>/<stem>_sir.json`` after validation.
+        Useful for debugging the intermediate representation.
     run_matlab : bool
         Connect to (or start) a MATLAB Engine and build the .slx.
     session_name : str
@@ -75,6 +79,7 @@ def run_pipeline(
     dict
         script  : Path        — generated .m file
         slx     : Path | None — generated .slx (None if run_matlab=False)
+        sir     : Path | None — SIR JSON (None if dump_sir=False)
         issues  : list[str]   — SIR validation messages (WARNING/ERROR prefix)
         lint    : list[dict]  — sfLintChart findings (empty when skipped)
 
@@ -123,6 +128,13 @@ def run_pipeline(
     if errors:
         raise ValueError('Validation failed:\n' + '\n'.join(errors))
 
+    sir_json_path = None
+    if dump_sir:
+        sir_json_path = out_dir / (yaml_path.stem + '_sir.json')
+        sf_yaml_to_sir_json(yaml_path, output_path=sir_json_path)
+        if verbose:
+            print(f'  SIR JSON    : {sir_json_path}')
+
     # ── Step 2: Generate .m script ────────────────────────────────────────────
     script_path = out_dir / (yaml_path.stem + '.m')
     if verbose:
@@ -145,6 +157,7 @@ def run_pipeline(
     result = {
         'script': script_path,
         'slx': None,
+        'sir': sir_json_path,
         'issues': validation_issues,
         'lint': [],
     }
@@ -182,10 +195,9 @@ def run_pipeline(
             print(f'  Session     : started and shared as "{session_name}"')
             print(f'  Note        : session closes when this Python process exits.')
             print()
-            print(f'  ┌─ For a persistent session that survives Python restarts: ──')
-            print(f'  │  Open MATLAB, then run in the Command Window:')
-            print(f'  │    >> matlab.engine.shareEngine(\'{session_name}\')')
-            print(f'  └───────────────────────────────────────────────────────────')
+            print(f'  For a persistent session that survives Python restarts:')
+            print(f'    Open MATLAB, then run in the Command Window:')
+            print(f'      >> matlab.engine.shareEngine(\'{session_name}\')')
 
     # Clear MATLAB workspace and close the model if already loaded from a
     # previous run — prevents stale variables and new_system() conflicts.
@@ -226,11 +238,11 @@ def run_pipeline(
 
             if verbose:
                 if result['lint']:
-                    print(f'  Issues      : {len(result["lint"])}  →  {lint_json.name}')
+                    print(f'  Issues      : {len(result["lint"])}  ->  {lint_json.name}')
                     for iss in result['lint']:
                         print(f'  [{iss["name"]}] {iss["details"]}')
                 else:
-                    print(f'  Result      : clean  →  {lint_json.name}')
+                    print(f'  Result      : clean  ->  {lint_json.name}')
 
     # Engine is intentionally left running so the next call reconnects
     # to the shared session instead of paying the cold-start cost again.

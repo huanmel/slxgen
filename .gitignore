@@ -230,6 +230,7 @@ slprj/
 example/model_gen/generated/*.slx
 example/model_gen/generated/*.png
 example/model_gen/generated/*_lint.json
+example/model_gen/generated/*_sir.json
 example/model_gen/generated/*_charts/
 example/model_gen/generated/*_compact.m
 example/model_gen/generated/*_ortho.m
