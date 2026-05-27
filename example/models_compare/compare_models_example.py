@@ -20,8 +20,8 @@ from slxgen import slx_process, compare_models
 
 
 MODELS = {
-    'TmsAcSpdCtl_dp190': r'C:\Users\ivanm\Documents\MATLAB\EKL\dp190_ox\dp190_ox_csw\.deps\comps\apps\tcuapp0\models\subs\TmsAcSpdCtl_dp190.slx',
-    'TmsAcSpdCtl_v0':    r'C:\Users\ivanm\Documents\MATLAB\EKL\dp190_ox\dp190_ox_csw\.deps\comps\apps\tcuapp0\models\subs\TmsAcSpdCtl_v0.slx',
+    'model1': r'model1.slx',
+    'model2': r'model2.slx',
 }
 
 FILTERS = {

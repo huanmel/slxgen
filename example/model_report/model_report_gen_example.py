@@ -20,10 +20,9 @@ sys.stdout.reconfigure(encoding='utf-8')
 from slxgen import process_model_tree
 
 
-PROJ_ROOT   = r'C:\Users\ivanm\Documents\MATLAB\EKL\dp187_ravo\dp187_csw\.deps\comps\apps\tcuapp0'
-MODEL_PATH  = r'C:\Users\ivanm\Documents\MATLAB\EKL\dp187_ravo\dp187_csw\.deps\comps\apps\tcuapp0\models\TcuApp0.slx'
-# PROJ_ROOT   = r'C:\Users\ivanm\Documents\MATLAB\EKL\dp187_ravo\dp187_csw\.deps\comps\drivers\hmidrvrdp187'
-# MODEL_PATH  = r'C:\Users\ivanm\Documents\MATLAB\EKL\dp187_ravo\dp187_csw\.deps\comps\drivers\hmidrvrdp187\models\HMIDrvrDp187_sub.slx'
+PROJ_ROOT   = r'project_root_folder'  # adjust to your project root for resolving SourceBlock refs
+MODEL_PATH  = r'myModel.slx'
+
 OUTPUT_DIR  = Path(MODEL_PATH).parent / (Path(MODEL_PATH).stem + '_reports')
 FILTERS_YML = Path(__file__).parent.parent / 'data' / 'slx_filters_default.yml'
 

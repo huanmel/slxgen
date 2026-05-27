@@ -14,8 +14,11 @@ import contextlib
 import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+import json
 from slxgen import sf_yaml_to_matlab
 from slxgen.stateflow_sir import yaml_to_sir, sir_validate
+
+MATLAB_SCRIPTS = Path(__file__).parent.parent.parent / 'slxgen' / 'matlab'
 
 YAML     = Path(__file__).parent / 'Ex1_StMach_sf.yaml'
 OUT_DIR  = Path(__file__).parent / 'generated'
@@ -125,10 +128,37 @@ try:
         eng = matlab.engine.start_matlab()
         started = True
     eng.cd(str(OUT_DIR), nargout=0)
-    for output in outputs:
+    for v, output in zip(variants, outputs):
         print(f'  Running {output.name} ...')
         eng.run(str(output), nargout=0)
         print(f'  Done.')
+
+    # ---------------------------------------------------------------------------
+    # Step 4 — Structural lint on generated .slx via the open engine session
+    # ---------------------------------------------------------------------------
+    # addpath makes sfLintChart and slx_lint available in the running session.
+    # slx_lint() reopens the .slx, runs sfLintChart, writes JSON, closes model.
+    eng.addpath(str(MATLAB_SCRIPTS).replace('\\', '/'), nargout=0)
+    print()
+    for v in variants:
+        slx_path = OUT_DIR / (v['model_name'] + '.slx')
+        if not slx_path.exists():
+            print(f'sfLint {v["model_name"]}.slx: not found — skipping')
+            continue
+        lint_json = OUT_DIR / (v['model_name'] + '_lint.json')
+        eng.slx_lint(  # type: ignore[union-attr]
+            str(slx_path).replace('\\', '/'),
+            str(lint_json).replace('\\', '/'),
+            nargout=0,
+        )
+        issues = json.loads(lint_json.read_text(encoding='utf-8'))
+        if issues:
+            print(f'sfLint {slx_path.name}: {len(issues)} issue(s)  →  {lint_json.name}')
+            for i, iss in enumerate(issues, 1):
+                print(f'  [{i}] WARNING: [sfLint:{iss["chart"]}] {iss["name"]}: {iss["details"]}')
+        else:
+            print(f'sfLint {slx_path.name}: clean  →  {lint_json.name}')
+
     if started:
         eng.quit()
 except ImportError:

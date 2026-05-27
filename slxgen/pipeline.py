@@ -1,0 +1,238 @@
+"""High-level pipeline entry point for slxgen.
+
+Wraps validate → generate → (optional) MATLAB run → (optional) sfLint
+into a single call.  The MATLAB Engine is left running after use so the
+next call can reconnect to the shared session instead of starting cold.
+
+── Recommended one-time MATLAB setup ──────────────────────────────────────
+Open MATLAB, then in the Command Window:
+  >> matlab.engine.shareEngine('slxgen')
+
+After that, every run_pipeline(..., run_matlab=True) call connects in <1 s
+and you can watch execution in the live MATLAB window.  The session survives
+Python restarts.  Use open_desktop=True to get the MATLAB GUI when starting
+a fresh engine from Python.
+───────────────────────────────────────────────────────────────────────────
+"""
+from pathlib import Path
+import contextlib
+import io
+import json
+import yaml
+
+from .stateflow_sir import yaml_to_sir, sir_validate
+from .stateflow import sf_yaml_to_matlab as _sf_yaml_to_matlab
+
+_MATLAB_SCRIPTS = Path(__file__).parent / 'matlab'
+_SEP = '─' * 60
+_SESSION_TIP = "Tip: open MATLAB and run  matlab.engine.shareEngine('{name}')  for a persistent session."
+
+
+def _hdr(step, total, label):
+    print(f'\n[{step}/{total}] {label}')
+    print(_SEP)
+
+
+def run_pipeline(
+    yaml_path,
+    out_dir=None,
+    model_name=None,
+    run_matlab=False,
+    session_name='slxgen',
+    open_desktop=False,
+    lint=True,
+    elk_options=None,
+    verbose=True,
+):
+    """Validate, generate, and optionally build a Stateflow model in MATLAB.
+
+    Parameters
+    ----------
+    yaml_path : str | Path
+        Stateflow YAML source file.
+    out_dir : str | Path | None
+        Output directory.  Defaults to ``<yaml_path.parent>/generated``.
+    model_name : str | None
+        Simulink model name.  Defaults to the YAML file stem.
+    run_matlab : bool
+        Connect to (or start) a MATLAB Engine and build the .slx.
+    session_name : str
+        Name for a newly started shared MATLAB session.
+        Match it in MATLAB: ``matlab.engine.shareEngine('slxgen')``.
+    open_desktop : bool
+        When starting a *new* MATLAB engine, open the full desktop GUI so
+        you can inspect the workspace and command window during execution.
+        Has no effect when connecting to an existing shared session.
+    lint : bool
+        Run sfLintChart on the generated .slx (only when run_matlab=True).
+    elk_options : dict | None
+        ELK layout options forwarded to sf_yaml_to_matlab.
+    verbose : bool
+        Print step headers and status lines.
+
+    Returns
+    -------
+    dict
+        script  : Path        — generated .m file
+        slx     : Path | None — generated .slx (None if run_matlab=False)
+        issues  : list[str]   — SIR validation messages (WARNING/ERROR prefix)
+        lint    : list[dict]  — sfLintChart findings (empty when skipped)
+
+    Raises
+    ------
+    ValueError
+        If the YAML has structural ERRORs that prevent generation.
+    ImportError
+        If run_matlab=True but matlab.engine is not installed.
+    """
+    yaml_path = Path(yaml_path)
+    if out_dir is None:
+        out_dir = yaml_path.parent / 'generated'
+    out_dir = Path(out_dir)
+    out_dir.mkdir(exist_ok=True)
+    if model_name is None:
+        model_name = yaml_path.stem
+    elk_options = elk_options or {}
+
+    total_steps = 4 if run_matlab else 2
+
+    # ── Step 1: Validate ──────────────────────────────────────────────────────
+    if verbose:
+        _hdr(1, total_steps, f'Validate   {yaml_path.name}')
+
+    chart_dict = yaml.safe_load(yaml_path.read_text(encoding='utf-8'))
+    sir = yaml_to_sir(chart_dict)
+    validation_issues = sir_validate(sir)
+
+    errors   = [m for m in validation_issues if m.startswith('ERROR')]
+    warnings = [m for m in validation_issues if m.startswith('WARNING')]
+
+    if verbose:
+        print(f'  States      : {len(sir.states)}')
+        print(f'  Transitions : {len(sir.transitions)}')
+        print(f'  Variables   : {len(sir.variables)}')
+        if errors:
+            for msg in errors:
+                print(f'  {msg}')
+        elif warnings:
+            for msg in warnings:
+                print(f'  {msg}')
+        else:
+            print('  Result      : clean')
+
+    if errors:
+        raise ValueError('Validation failed:\n' + '\n'.join(errors))
+
+    # ── Step 2: Generate .m script ────────────────────────────────────────────
+    script_path = out_dir / (yaml_path.stem + '.m')
+    if verbose:
+        _hdr(2, total_steps, f'Generate   {script_path.name}')
+
+    with contextlib.redirect_stderr(io.StringIO()):
+        _sf_yaml_to_matlab(
+            yaml_path,
+            export_charts=True,
+            output_path=script_path,
+            model_name=model_name,
+            elk_options=elk_options,
+        )
+
+    if verbose:
+        lines = len(script_path.read_text(encoding='utf-8').splitlines())
+        print(f'  Written     : {script_path}')
+        print(f'  Size        : {lines} lines')
+
+    result = {
+        'script': script_path,
+        'slx': None,
+        'issues': validation_issues,
+        'lint': [],
+    }
+
+    if not run_matlab:
+        return result
+
+    # ── Step 3: MATLAB — build model ──────────────────────────────────────────
+    if verbose:
+        _hdr(3, total_steps, 'MATLAB     Build model')
+
+    try:
+        import matlab.engine  # type: ignore[import-untyped]
+    except ImportError:
+        raise ImportError(
+            'matlab.engine not available — activate the py311_slxgen env '
+            'or call run_pipeline(..., run_matlab=False).'
+        )
+
+    sessions = matlab.engine.find_matlab()
+    if sessions:
+        eng = matlab.engine.connect_matlab(sessions[0])
+        if verbose:
+            print(f'  Session     : connected to "{sessions[0]}" (existing)')
+            print(f'  Note        : session stays open after Python exits')
+            print(f'  Tip         : {_SESSION_TIP.format(name=session_name)}')
+    else:
+        desktop_flag = '-desktop' if open_desktop else ''
+        if verbose:
+            mode = 'with desktop GUI' if open_desktop else 'headless'
+            print(f'  Session     : no shared session found — starting new engine ({mode})...')
+        eng = matlab.engine.start_matlab(desktop_flag)
+        eng.eval(f"matlab.engine.shareEngine('{session_name}')", nargout=0)
+        if verbose:
+            print(f'  Session     : started and shared as "{session_name}"')
+            print(f'  Note        : session closes when this Python process exits.')
+            print()
+            print(f'  ┌─ For a persistent session that survives Python restarts: ──')
+            print(f'  │  Open MATLAB, then run in the Command Window:')
+            print(f'  │    >> matlab.engine.shareEngine(\'{session_name}\')')
+            print(f'  └───────────────────────────────────────────────────────────')
+
+    # Clear MATLAB workspace and close the model if already loaded from a
+    # previous run — prevents stale variables and new_system() conflicts.
+    if verbose:
+        print()
+        print(f'  Clearing    : MATLAB workspace + closing "{model_name}" if open')
+    eng.eval('clear', nargout=0)
+    eng.eval(f"if bdIsLoaded('{model_name}'), bdclose('{model_name}'); end", nargout=0)
+
+    if verbose:
+        print(f'  Running     : {script_path.name}')
+    eng.cd(str(out_dir), nargout=0)
+    eng.run(str(script_path), nargout=0)
+
+    slx_path = out_dir / (model_name + '.slx')
+    result['slx'] = slx_path
+    if verbose:
+        status = 'OK' if slx_path.exists() else 'NOT FOUND'
+        print(f'  Built       : {slx_path.name}  [{status}]')
+
+    # ── Step 4: sfLint (MATLAB) ───────────────────────────────────────────────
+    if lint:
+        if verbose:
+            _hdr(4, total_steps, f'sfLint     {slx_path.name}')
+
+        if not slx_path.exists():
+            if verbose:
+                print('  Skipped     : .slx not found')
+        else:
+            lint_json = out_dir / (model_name + '_lint.json')
+            eng.addpath(str(_MATLAB_SCRIPTS).replace('\\', '/'), nargout=0)
+            eng.slx_lint(  # type: ignore[union-attr]
+                str(slx_path).replace('\\', '/'),
+                str(lint_json).replace('\\', '/'),
+                nargout=0,
+            )
+            result['lint'] = json.loads(lint_json.read_text(encoding='utf-8'))
+
+            if verbose:
+                if result['lint']:
+                    print(f'  Issues      : {len(result["lint"])}  →  {lint_json.name}')
+                    for iss in result['lint']:
+                        print(f'  [{iss["name"]}] {iss["details"]}')
+                else:
+                    print(f'  Result      : clean  →  {lint_json.name}')
+
+    # Engine is intentionally left running so the next call reconnects
+    # to the shared session instead of paying the cold-start cost again.
+
+    return result

@@ -12,6 +12,8 @@ from .slx2txt import (
     stateflow_dict_to_matlab,
     sf_yaml_to_matlab,
 )
+from .slx_lint import slx_lint, print_lint_report
+from .pipeline import run_pipeline
 
 __all__ = [
     'parse_slx',
@@ -26,4 +28,7 @@ __all__ = [
     'stateflow_chart_to_dict',
     'stateflow_dict_to_matlab',
     'sf_yaml_to_matlab',
+    'slx_lint',
+    'print_lint_report',
+    'run_pipeline',
 ]

@@ -1,22 +1,22 @@
-"""Demonstrate SIR generation for Ex1_StMach_sf.yaml.
+"""SIR inspection tool for Ex1_StMach_sf.yaml.
 
 The Stateflow Intermediate Representation (SIR) is a normalized, validated
-in-memory graph built from the YAML authoring format.  It sits between the
-human-written YAML and the MATLAB codegen:
+in-memory graph that sits between the YAML authoring format and MATLAB codegen:
 
     YAML  -->  yaml_to_sir()  -->  SIRModel  -->  sir_validate()
                                                        |
-                                               issues to stderr
-                                                   (warnings)
+                                               sir_to_chart_dict()
+                                                       |
+                                           stateflow_dict_to_matlab()
 
-The existing MATLAB codegen path (sf_yaml_to_matlab) is unchanged.
-The SIR is currently used for validation only; a SIR-based codegen
-(sir_to_matlab) is planned as a future phase.
+Phases 1 and 2 are complete: SIR validates structure and drives generation
+via sir_to_chart_dict().  Use gen_Ex1.py for the full production pipeline.
 
-This script shows three things:
-  1. Load and normalize: YAML --> SIRModel
-  2. Validate: report structural issues (missing order, bad state refs, etc.)
+This script is a diagnostic tool that shows SIR internals:
+  1. Load and normalize: YAML --> SIRModel (print state/transition list)
+  2. Validate: report structural issues
   3. Export: write the SIR to JSON for inspection / downstream tooling
+  4. Verify sir_to_chart_dict round-trip
 
 Output: example/model_gen/generated/Ex1_StMach_sir.json
 """

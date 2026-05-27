@@ -21,8 +21,8 @@ from slxgen import process_model_tree, compare_model_trees
 PROJ_ROOT   = r'C:\Users\ivanm\Documents\MATLAB\EKL\dp190_ox\dp190_ox_csw\.deps\comps\apps\tcuapp0'
 FILTERS_YML = Path(__file__).parent.parent / 'data' / 'slx_filters_default.yml'
 
-MODEL_A = r'C:\Users\ivanm\Documents\MATLAB\EKL\dp190_ox\dp190_ox_csw\.deps\comps\apps\tcuapp0\models\TcuApp0.slx'
-MODEL_B = r'C:\Users\ivanm\Documents\MATLAB\EKL\dp190_ox\dp190_ox_csw\.deps\comps\apps\tcuapp0\models\TmsApp_dp190.slx'
+MODEL_A = r'model1.slx'
+MODEL_B = r'model2.slx'
 
 # Output folder for the diff report (created if missing)
 DIFF_DIR = Path(MODEL_A).parent / 'diff_reports'
