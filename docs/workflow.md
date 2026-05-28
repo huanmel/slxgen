@@ -91,8 +91,16 @@ inputs:
   - {name: vec_in, type: single, size: [3, 1]}  # 3×1 vector  → Props.Array.Size = '[3 1]'
   - {name: sc_in,  type: uint8,  size: [1]}    # explicit scalar → Props.Array.Size = '[1]'
   - {name: inh_in, type: single, size: [-1]}   # inherited      → Props.Array.Size = '[-1]'
-  - {name: def_in, type: boolean}              # size: omitted  → controlled by default_size parameter
-  # size: omitted + default_size=None (default) → no Props.Array.Size emitted; Stateflow decides (inherited)
+  - {name: def_in, type: boolean}              # size: omitted  → controlled by default_size
+
+outputs:
+  - {name: mode_out, type: uint8, initial_value: 0, size: [1]}  # size: applies to outputs too
+
+locals:
+  - {name: counter, type: uint8, initial_value: 0, size: [1]}   # and to locals
+
+  # size: and default_size apply equally to inputs, outputs, and locals.
+  # size: omitted + default_size=None (default) → no Props.Array.Size emitted; Stateflow decides
   # size: omitted + default_size=[1]            → Props.Array.Size = '[1]' (explicit scalar)
   # size: omitted + default_size=[-1]           → Props.Array.Size = '[-1]' (explicit inherited)
 
