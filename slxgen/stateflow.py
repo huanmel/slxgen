@@ -747,6 +747,17 @@ def _escape_matlab_str(s: str) -> str:
     return s.replace("'", "''")
 
 
+def _matlab_initial_value(v) -> str:
+    """Convert a YAML initial_value to a MATLAB Props.InitialValue string.
+
+    MATLAB expects lowercase 'true'/'false' for boolean data; Python's bool
+    repr produces 'True'/'False' which MATLAB cannot evaluate.
+    """
+    if isinstance(v, bool):
+        return 'true' if v else 'false'
+    return _escape_matlab_str(str(v))
+
+
 def _matlab_str_literal(s: str) -> str:
     """Return a MATLAB expression for string s.
 
@@ -961,7 +972,7 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: 'str | None' = None,
             lines.append(f"{v}.Props.Type.Method = 'Built-in';")
             lines.append(f"{v}.DataType = '{_escape_matlab_str(d['type'])}';")
         if d.get('initial_value') is not None:
-            lines.append(f"{v}.Props.InitialValue = '{_escape_matlab_str(str(d['initial_value']))}';")
+            lines.append(f"{v}.Props.InitialValue = '{_matlab_initial_value(d['initial_value'])}';")
         if 'size' in d:
             size_str = ' '.join(str(n) for n in d['size'])
             lines.append(f"{v}.Props.Array.Size = '[{size_str}]';")
@@ -979,7 +990,7 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: 'str | None' = None,
             lines.append(f"{v}.Props.Type.Method = 'Built-in';")
             lines.append(f"{v}.DataType = '{_escape_matlab_str(d['type'])}';")
         if d.get('initial_value') is not None:
-            lines.append(f"{v}.Props.InitialValue = '{_escape_matlab_str(str(d['initial_value']))}';")
+            lines.append(f"{v}.Props.InitialValue = '{_matlab_initial_value(d['initial_value'])}';")
         if 'size' in d:
             size_str = ' '.join(str(n) for n in d['size'])
             lines.append(f"{v}.Props.Array.Size = '[{size_str}]';")
@@ -997,7 +1008,7 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: 'str | None' = None,
             lines.append(f"{v}.Props.Type.Method = 'Built-in';")
             lines.append(f"{v}.DataType = '{_escape_matlab_str(d['type'])}';")
         if d.get('initial_value') is not None:
-            lines.append(f"{v}.Props.InitialValue = '{_escape_matlab_str(str(d['initial_value']))}';")
+            lines.append(f"{v}.Props.InitialValue = '{_matlab_initial_value(d['initial_value'])}';")
         if 'size' in d:
             size_str = ' '.join(str(n) for n in d['size'])
             lines.append(f"{v}.Props.Array.Size = '[{size_str}]';")

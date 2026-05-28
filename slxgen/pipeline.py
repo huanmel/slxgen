@@ -232,6 +232,14 @@ def run_pipeline(
     eng.eval('clear', nargout=0)
     eng.eval(f"if bdIsLoaded('{model_name}'), bdclose('{model_name}'); end", nargout=0)
 
+    # On Windows the script base name (e.g. hvac_state.m) matches the model
+    # name case-insensitively (HVAC_State.slx).  MATLAB's run() refuses to
+    # execute when an .slx with the same stem exists in the directory, so
+    # delete it here before the script can do so itself.
+    _stale_slx = out_dir / (model_name + '.slx')
+    if _stale_slx.exists():
+        _stale_slx.unlink()
+
     if verbose:
         print(f'  Running     : {script_path.name}')
     eng.cd(str(out_dir), nargout=0)
