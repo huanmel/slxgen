@@ -322,12 +322,19 @@ Risk: low — the generated body is self-contained; only the outer wrapper chang
   ```yaml
   inputs:
     - {name: vec_in,  type: single, size: [3, 1]}   # 3×1 column vector → Props.Array.Size = '[3 1]'
-    - {name: flag,    type: boolean}                 # scalar — size: omitted, no size property emitted
-  outputs:
-    - {name: mat_out, type: double, size: [3, 3]}   # 3×3 matrix → Props.Array.Size = '[3 3]'
+    - {name: mat_in,  type: double, size: [3, 3]}   # 3×3 matrix        → Props.Array.Size = '[3 3]'
+    - {name: inh_in,  type: single, size: [-1]}     # inherited          → Props.Array.Size = '[-1]'
+    - {name: flag,    type: boolean}                 # scalar — size: omitted, no Props.Array.Size emitted
   locals:
     - {name: x,       type: uint8,  size: [1]}      # explicit scalar — same as omitting size:
   ```
+
+  | `size:` value | Meaning | `Props.Array.Size` emitted |
+  | --- | --- | --- |
+  | omitted | scalar (default) | no — Stateflow default |
+  | `[1]` | explicit scalar | no — same as omitting |
+  | `[n, m]` | n×m array | yes — `'[n m]'` |
+  | `[-1]` | inherited from connected signal | yes — `'[-1]'` |
 
   SIR: `SIRVariable.size` — always `[1]` when unspecified; propagated through
   `sir_to_chart_dict()`. Codegen emits `Props.Array.Size` only when size ≠ `[1]`.

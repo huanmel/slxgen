@@ -88,11 +88,11 @@ name: ChartName
 
 inputs:
   - {name: signal_in, type: boolean}
-  - {name: vec_in, type: single, size: [3, 1]}  # 3×1 column vector
-  # size: omitted → scalar [1] (default, no Props.Array.Size emitted)
-  # size: [1]    → same as omitting (explicit scalar, no emission)
-  # size: [3, 1] → column vector    → Props.Array.Size = '[3 1]'
-  # size: [3, 3] → matrix           → Props.Array.Size = '[3 3]'
+  - {name: vec_in, type: single, size: [3, 1]}  # 3×1 column vector → Props.Array.Size = '[3 1]'
+  - {name: inh_in, type: single, size: [-1]}   # inherited from connected signal → Props.Array.Size = '[-1]'
+  # size: omitted / size: [1] → scalar (default); no Props.Array.Size emitted
+  # size: [n, m]              → n×m array; Props.Array.Size = '[n m]'
+  # size: [-1]                → inherited; Props.Array.Size = '[-1]'
 
 outputs:
   - {name: mode_out, type: uint8, initial_value: 0}
