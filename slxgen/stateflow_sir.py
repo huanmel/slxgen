@@ -66,13 +66,18 @@ class SIRModel:
 # Normalization
 # ---------------------------------------------------------------------------
 
-def yaml_to_sir(chart_dict: dict) -> SIRModel:
+def yaml_to_sir(chart_dict: dict, default_size: list | None = None) -> SIRModel:
     """Normalise a chart_dict (as loaded from sf.yaml) into a SIRModel.
 
     The chart_dict is the same dict passed to stateflow_dict_to_matlab() —
     no changes to the caller are required.
+
+    default_size: size used for variables that have no explicit size: field.
+        None / [1] → scalar (Stateflow default, no Props.Array.Size emitted).
+        [-1]        → inherited from the connected signal.
     """
     name = chart_dict.get('name', 'unnamed')
+    _default_size = default_size if default_size is not None else [1]
 
     # --- Variables ---
     variables: list[SIRVariable] = []
@@ -84,7 +89,7 @@ def yaml_to_sir(chart_dict: dict) -> SIRModel:
                 scope=scope_label,
                 type=v.get('type'),
                 initial_value=v.get('initial_value'),
-                size=v.get('size', [1]),
+                size=v.get('size', _default_size),
             ))
 
     # --- States (recursive flatten, depth-first pre-order) ---

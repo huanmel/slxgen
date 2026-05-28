@@ -1269,16 +1269,19 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: 'str | None' = None,
 
 def sf_yaml_to_matlab(yaml_path, output_path=None, model_name: 'str | None' = None,
                       export_charts: bool = False,
-                      elk_options: 'Dict | None' = None) -> str:
+                      elk_options: 'Dict | None' = None,
+                      default_size: 'List | None' = None) -> str:
     """Read a Stateflow sf.yaml file and generate a MATLAB script to recreate it.
 
     Returns the script as a string. If output_path is given, also writes it to disk.
     model_name: override the model/chart name from the YAML (useful for side-by-side comparisons).
     export_charts: if True, the generated script includes inline PNG export at the end.
     elk_options: optional ELK layout option overrides, e.g. {'elk.direction': 'RIGHT'}.
+    default_size: size applied to variables with no explicit size: field.
+        None / [1] → scalar (default). [-1] → inherited from connected signal.
     """
     chart_dict = yaml.safe_load(Path(yaml_path).read_text(encoding='utf-8'))
-    sir = yaml_to_sir(chart_dict)
+    sir = yaml_to_sir(chart_dict, default_size=default_size)
     issues = sir_validate(sir)
     if issues:
         label = Path(yaml_path).name

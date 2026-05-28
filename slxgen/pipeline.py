@@ -46,6 +46,7 @@ def run_pipeline(
     elk_options=None,
     adaptive_leaf_width=False,
     adaptive_spacing=False,
+    default_size=None,
     verbose=True,
 ):
     """Validate, generate, and optionally build a Stateflow model in MATLAB.
@@ -77,6 +78,10 @@ def run_pipeline(
         Run sfLintChart on the generated .slx (only when run_matlab=True).
     elk_options : dict | None
         ELK layout options forwarded to sf_yaml_to_matlab.
+    default_size : list | None
+        Size used for variables that have no explicit ``size:`` field in YAML.
+        ``None`` or ``[1]`` → scalar (Stateflow default, no ``Props.Array.Size``
+        emitted). ``[-1]`` → inherited from the connected signal.
     adaptive_leaf_width : bool
         Compute each leaf state's width from its longest label line instead of
         using the fixed ``_SF_LEAF_W`` constant.  Wider states rarely hurt;
@@ -125,7 +130,7 @@ def run_pipeline(
         _hdr(1, total_steps, f'Validate   {yaml_path.name}')
 
     chart_dict = yaml.safe_load(yaml_path.read_text(encoding='utf-8'))
-    sir = yaml_to_sir(chart_dict)
+    sir = yaml_to_sir(chart_dict, default_size=default_size)
     validation_issues = sir_validate(sir)
 
     errors   = [m for m in validation_issues if m.startswith('ERROR')]
@@ -166,6 +171,7 @@ def run_pipeline(
             output_path=script_path,
             model_name=model_name,
             elk_options=elk_options,
+            default_size=default_size,
         )
 
     if verbose:

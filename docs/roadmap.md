@@ -336,8 +336,21 @@ Risk: low — the generated body is self-contained; only the outer wrapper chang
   | `[n, m]` | n×m array | yes — `'[n m]'` |
   | `[-1]` | inherited from connected signal | yes — `'[-1]'` |
 
-  SIR: `SIRVariable.size` — always `[1]` when unspecified; propagated through
-  `sir_to_chart_dict()`. Codegen emits `Props.Array.Size` only when size ≠ `[1]`.
+  SIR: `SIRVariable.size` — always set; `[1]` when unspecified (configurable).
+  Codegen emits `Props.Array.Size` only when size ≠ `[1]`.
+
+  **Configuring the default** — pass `default_size` to any entry point to change
+  what unspecified variables receive:
+
+  ```python
+  # All variables without size: become inherited
+  run_pipeline('my.yaml', default_size=[-1])
+  sf_yaml_to_matlab('my.yaml', 'out.m', default_size=[-1])
+  yaml_to_sir(chart_dict, default_size=[-1])
+  ```
+
+  Per-variable overrides still work: an explicit `size:` in the YAML always takes
+  precedence over `default_size`.
 
 - **Junctions**: decision nodes for shared transition routing — YAML key + codegen.
 - **Inner transitions**: `inner: true` — stays within source's active child.
