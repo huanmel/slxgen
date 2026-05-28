@@ -1048,8 +1048,6 @@ if __name__ == '__main__':
         'skip_blocks': ['SignalConversion', 'DataTypeConversion'],
     }
     filein = r'data/model/pid_control_ex1.slx'
-    filein = r'C:\Users\ivanm\Documents\MATLAB\EKL\dp187_ravo\dp187_csw\models\APP_FUN\subs\APP_SENSORS.slx'
-    filein = r'C:\Users\ivanm\Documents\MATLAB\EKL\dp190_ox\dp190_ox_csw\.deps\comps\apps\tcuapp0\models\TmsCtlr_lib.slx'
     filefull_out = filein.replace('.slx', '_full.json')
     filelim_out = filein.replace('.slx', '_slim.json')
     fileslimmin_out = filein.replace('.slx', '_slim.min.json')

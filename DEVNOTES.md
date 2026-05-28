@@ -400,7 +400,7 @@ Full workflow from source SLX to a regenerated model with visual review:
 ### Step 1 — Extract sf.yaml from SLX (Python)
 
 ```python
-# produces HMIDrvrDp187_sub_reports/HMI_StMach_sf.yaml
+# produces HMIDrvrproject_ID_sub_reports/HMI_StMach_sf.yaml
 python work/process_model.py
 # or via API:
 from slxgen import slx_process
@@ -410,7 +410,7 @@ slx_process(slx_path, filters, outputs=['sf.yaml'])
 ### Step 2 — Generate MATLAB script from sf.yaml (Python)
 
 ```python
-# produces HMIDrvrDp187_sub_reports/HMI_StMach_sf.m
+# produces HMIDrvrproject_ID_sub_reports/HMI_StMach_sf.m
 python work/sf_yaml_to_matlab_HMI_StMach.py
 # or via API:
 from slxgen import sf_yaml_to_matlab
@@ -567,9 +567,9 @@ Next phases:
 ## Test model paths (as of May 2026)
 
 ```python
-# Primary test model (HMI driver for dp187_ravo project)
-MODEL_PATH = r'C:\Users\ivanm\Documents\MATLAB\EKL\dp187_ravo\dp187_csw\.deps\comps\drivers\hmidrvrdp187\models\HMIDrvrDp187_sub.slx'
-PROJ_ROOT  = r'C:\Users\ivanm\Documents\MATLAB\EKL\dp187_ravo\dp187_csw\.deps\comps\drivers\hmidrvrdp187'
+# Primary test model (HMI driver for example project)
+MODEL_PATH = r'C:\Users\ivanm\Documents\MATLAB\EKL\myproject\project_ID_csw\.deps\comps\drivers\hmidrvrproject_ID\models\HMIDrvrproject_ID_sub.slx'
+PROJ_ROOT  = r'C:\Users\ivanm\Documents\MATLAB\EKL\myproject\project_ID_csw\.deps\comps\drivers\hmidrvrproject_ID'
 
 # Small test model in repo
 data/model/pid_control_ex1.slx

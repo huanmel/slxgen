@@ -276,7 +276,7 @@ a properly routed arc still passes near a sibling state (can reassess then).
 from slxgen.pipeline import run_pipeline
 run_pipeline("example/model_gen/DevCtrl_StMach_sf.yaml", run_matlab=False,
              adaptive_leaf_width=True)
-run_pipeline("work/dp187_HMI/hvac_state.yaml", run_matlab=False,
+run_pipeline("work/project_ID_HMI/hvac_state.yaml", run_matlab=False,
              adaptive_leaf_width=True)
 '@
 ```
