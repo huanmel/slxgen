@@ -260,6 +260,30 @@ def sf_to_elk_json(chart_dict: dict, layout_options: 'dict | None' = None,
 
     root_children = [build_node(name, body, '') for name, body in states_dict.items()]
 
+    # Apply FIRST/LAST layer constraints to root-level states — the same logic used
+    # for compound children inside build_node, which was missing at the root level.
+    root_init      = next((n for n in states_dict if states_dict[n].get('default')), None)
+    root_auto_sinks = _find_sink_states(states_dict, transitions, '')
+    root_roles = {
+        name: _state_role(name, body, path=name, auto_sinks=auto_sinks)
+        for name, body in states_dict.items()
+    }
+    has_root_sink = any(r == 'sink' for r in root_roles.values())
+    for child_node in root_children:
+        cname = child_node['id']
+        lo = child_node.setdefault('layoutOptions', {})
+        role = root_roles[cname]
+        if role == 'sink':
+            lo['elk.partitioning.partition'] = '1'
+            lo['elk.layered.layerConstraint'] = 'LAST'
+        else:
+            if has_root_sink:
+                lo['elk.partitioning.partition'] = '0'
+            if cname in root_auto_sinks:
+                lo['elk.layered.layerConstraint'] = 'LAST'
+            elif cname == root_init:
+                lo['elk.layered.layerConstraint'] = 'FIRST'
+
     root_opts = {
         'elk.algorithm':                                'layered',
         'elk.direction':                                direction,
@@ -273,6 +297,8 @@ def sf_to_elk_json(chart_dict: dict, layout_options: 'dict | None' = None,
         'elk.edgeRouting':                              'SPLINES',
     }
     root_opts.update(overrides)
+    if has_root_sink:
+        root_opts['elk.partitioning.activate'] = 'true'
 
     return {
         'id': 'root',

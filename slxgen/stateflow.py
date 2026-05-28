@@ -704,7 +704,7 @@ def _emit_sf_default_transition(
     if dst_pos is not None:
         x, y, w, h = dst_pos
         dot_x = x + w // 2
-        dot_y = max(y - 20, 0)
+        dot_y = max(y - 10, 0)
         mid_y = (dot_y + y) // 2
         lines.append(f"{tv}.SourceEndPoint = [{dot_x} {dot_y}];")
         lines.append(f"{tv}.MidPoint = [{dot_x} {mid_y}];")
