@@ -128,10 +128,14 @@ for ci = 1:numel(containers)
     end
 
     % -- 3c. Duplicate execution orders per source ------------------------
+    % Self-transitions (Source == Destination) are managed by Stateflow with an
+    % independent execution counter and must not be mixed with regular outgoing
+    % transitions when checking for duplicate orders.
     if ~isempty(innerTrans)
         for si = 1:numel(childStates)
             srcState = childStates(si);
-            fromMask = arrayfun(@(t) strcmp(t.Source.Name, srcState.Name), innerTrans);
+            fromMask = arrayfun(@(t) strcmp(t.Source.Name, srcState.Name) && ...
+                                     ~strcmp(t.Destination.Name, t.Source.Name), innerTrans);
             fromSrc  = innerTrans(fromMask);
             if numel(fromSrc) >= 2
                 orders = [fromSrc.ExecutionOrder];
