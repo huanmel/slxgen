@@ -1169,6 +1169,12 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: 'str | None' = None,
         src_var = path_to_var.get(src_path, '')
         dst_var = path_to_var.get(dst_path, '')
         lca = _lca_path(src_path, dst_path)
+        # Self-transition: _lca_path returns the state itself; parent must be the
+        # containing compound state so execution orders are in the same scope as
+        # the other outgoing transitions and sfLintChart does not flag [1 1].
+        if src_path and src_path == dst_path:
+            parts = src_path.split('.')
+            lca = '.'.join(parts[:-1])  # e.g. "CONTROL.AUTO" → "CONTROL"
         tr_parent_var = path_to_var.get(lca, 'ch') if lca else 'ch'
         label = _rebuild_transition_label(
             tr.get('trigger', ''), tr.get('condition', ''), tr.get('action', '')
@@ -1246,15 +1252,23 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: 'str | None' = None,
                 # Fallback: simple side routing
                 src_cx = sx + sw // 2
                 dst_cx = dx + dw // 2
-                mid_x  = (src_cx + dst_cx) // 2
-                mid_y  = ((sy + sh // 2) + (dy + dh // 2)) // 2
-                lines.append(f"{tv}.MidPoint = [{mid_x - lca_x} {mid_y - lca_y}];")
-                if src_cx <= dst_cx:
-                    lines.append(f"{tv}.SourceOClock = 3;")
-                    lines.append(f"{tv}.DestinationOClock = 9;")
+                if src_path == dst_path:
+                    # Self-loop: arc above the state, entering/exiting at 1/11 o'clock
+                    mid_x = sx + sw // 2
+                    mid_y = sy - 40
+                    lines.append(f"{tv}.MidPoint = [{mid_x - lca_x} {mid_y - lca_y}];")
+                    lines.append(f"{tv}.SourceOClock = 1;")
+                    lines.append(f"{tv}.DestinationOClock = 11;")
                 else:
-                    lines.append(f"{tv}.SourceOClock = 9;")
-                    lines.append(f"{tv}.DestinationOClock = 3;")
+                    mid_x  = (src_cx + dst_cx) // 2
+                    mid_y  = ((sy + sh // 2) + (dy + dh // 2)) // 2
+                    lines.append(f"{tv}.MidPoint = [{mid_x - lca_x} {mid_y - lca_y}];")
+                    if src_cx <= dst_cx:
+                        lines.append(f"{tv}.SourceOClock = 3;")
+                        lines.append(f"{tv}.DestinationOClock = 9;")
+                    else:
+                        lines.append(f"{tv}.SourceOClock = 9;")
+                        lines.append(f"{tv}.DestinationOClock = 3;")
 
     lines.append('')
     lines.append('% Auto-arrange blocks in the Simulink diagram')

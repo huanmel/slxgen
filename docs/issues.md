@@ -333,6 +333,42 @@ Long-term: fixing arc routing (ISS-010) makes the push function nearly obsolete.
 
 ---
 
+## ISS-011: Self-transition arc passes through state interior
+
+**Status:** `open`
+**Severity:** `cosmetic`
+**Component:** `stateflow.py` — fallback self-loop routing
+
+**Description:** When a state has a self-transition and ELK does not supply
+routing for the self-edge (ELK typically ignores self-edges), the fallback
+places the `MidPoint` only 40 px above the state's top edge with
+`SourceOClock = 1` / `DestinationOClock = 11`.  Stateflow draws the arc as a
+shallow curve that dips back into the state box rather than a clean loop
+sitting entirely above the state.
+
+The canonical Stateflow self-loop exits from the state's top, curves well above
+it, and re-enters from the top — the arc midpoint should be roughly **one full
+state-height above** the top edge so the loop is visibly external.
+
+**Reproduction:** Any YAML with a self-transition, e.g.
+`work/dp187_HMI/hvac_control_mode.yaml` — `CONTROL.AUTO` self-loop on `auto_bp`.
+
+**Root cause:** ELK ignores self-edges and returns no routing for them.
+The fallback in `stateflow.py` (`src_path == dst_path` branch) uses a fixed
+40 px offset, which is too small relative to a typical leaf state height
+(≥ 100 px) and does not account for the label height above the arc.
+
+**Workaround:** Accept the layout.  Logic and connectivity are correct; only the
+visual presentation is non-canonical.
+
+**Fix direction:** In the fallback self-loop branch of `stateflow.py`, raise the
+MidPoint to `sy - max(sh, 80)` (one full state height above the top edge).
+Also nudge `SourceOClock` / `DestinationOClock` symmetrically outward
+(e.g. 0.5 / 11.5) so the arc endpoints sit on the upper corners rather than
+the upper face, giving the loop enough horizontal spread to clear the label.
+
+---
+
 ## ISS-010: Cross-compound transition arcs cut through intermediate state boxes
 
 **Status:** `open`
