@@ -145,6 +145,8 @@ def run_pipeline(
         _hdr(1, total_steps, f'Validate   {yaml_path.name}')
 
     chart_dict = yaml.safe_load(yaml_path.read_text(encoding='utf-8'))
+    _data_file = chart_dict.get('data_file')
+    _sldd_name = Path(_data_file).stem if _data_file else yaml_path.stem
     sir = yaml_to_sir(chart_dict, default_size=default_size)
     validation_issues = sir_validate(sir)
 
@@ -208,9 +210,9 @@ def run_pipeline(
             if gen_sldd:
                 sldd_dir = out_dir / 'sldd_gen'
                 sldd_dir.mkdir(exist_ok=True)
-                sldd_script_path = sldd_dir / (yaml_path.stem + '_sldd.m')
+                sldd_script_path = sldd_dir / (_sldd_name + '_sldd.m')
                 sldd_script_path.write_text(
-                    enum_sldd_script(_enums, yaml_path.stem),
+                    enum_sldd_script(_enums, _sldd_name),
                     encoding='utf-8',
                 )
                 if verbose:
@@ -288,7 +290,7 @@ def run_pipeline(
             print(f'  Running     : sldd_gen/{sldd_script_path.name}  (create/update .sldd)')
         eng.cd(str(sldd_dir), nargout=0)
         eng.run(str(sldd_script_path), nargout=0)
-        sldd_path = sldd_dir / (yaml_path.stem + '.sldd')
+        sldd_path = sldd_dir / (_sldd_name + '.sldd')
         result['sldd'] = sldd_path
         if verbose:
             status = 'OK' if sldd_path.exists() else 'NOT FOUND'

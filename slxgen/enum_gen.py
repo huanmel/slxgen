@@ -230,9 +230,12 @@ def sf_yaml_to_sldd_script(yaml_path: str | Path,
     given the script is written to that file; the script text is returned
     regardless.
     """
+    import yaml as _yaml
     yaml_path = Path(yaml_path)
     if sldd_name is None:
-        sldd_name = yaml_path.stem
+        _chart = _yaml.safe_load(yaml_path.read_text(encoding='utf-8'))
+        _data_file = _chart.get('data_file')
+        sldd_name = Path(_data_file).stem if _data_file else yaml_path.stem
     enums = load_enums_from_yaml(yaml_path)
     text = enum_sldd_script(enums, sldd_name)
     if output_path is not None:
