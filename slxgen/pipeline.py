@@ -79,7 +79,7 @@ def run_pipeline(
     lint : bool
         Run sfLintChart on the generated .slx (only when run_matlab=True).
     gen_enums : bool
-        Generate MATLAB classdef ``.m`` files for any ``enums:`` / ``enum_file:``
+        Generate MATLAB classdef ``.m`` files for any ``enums:`` / ``data_file:``
         definitions found in the YAML and write them to *out_dir*.  Defaults to
         ``True``; set to ``False`` to skip.
     gen_sldd : bool

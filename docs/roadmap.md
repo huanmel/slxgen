@@ -43,7 +43,7 @@ the recommended visual preview format (encodes `en`/`du`/`ex` actions); Mermaid 
 lightweight structure-only alternative. See `docs/workflow.md §4.4`.
 
 **Enum codegen (done):** `enum_gen.py` generates MATLAB artefacts from `enums:` /
-`enum_file:` definitions in the model YAML.  Two outputs: `<TypeName>.m` classdef files
+`enums:` / `data_file:` definitions in the model YAML.  Two outputs: `<TypeName>.m` classdef files
 (simulation-ready, no MATLAB required to generate) and a `sldd_gen/<stem>_sldd.m` script
 that creates a Simulink Data Dictionary for production use.  Both are wired into
 `run_pipeline` via `gen_enums=True` (default) and `gen_sldd=False` (opt-in).

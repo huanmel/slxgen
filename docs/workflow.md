@@ -118,8 +118,8 @@ enums:                          # optional — inline enum definitions
       MODE_B: 1
       MODE_C: 2
 
-enum_file: path/to/enums.yaml   # optional — link a shared enum YAML (relative to this file)
-                                 # inline enums: override same-named types from the linked file
+data_file: path/to/project_types.yaml   # optional — link a shared types YAML (relative to this file)
+                                        # inline enums: override same-named types from the linked file
 
 states:
   STATE_A:
@@ -267,7 +267,7 @@ variable declarations (inputs / outputs / locals).
 
 Stateflow variables typed with user-defined enumerations use the `"Enum: TypeName"` syntax
 in the `type:` field.  The enum definitions themselves live either inline in the model YAML
-or in a shared file linked via `enum_file:`.
+or in a shared file linked via `data_file:`.
 
 **Inline enum definitions:**
 
@@ -295,14 +295,15 @@ enums:
       HIGH:  3
 ```
 
-**Shared enum file** — when the same types are used by multiple models, put the definitions
-in a standalone YAML and link to it:
+**Shared types file** — when the same types are used by multiple models, put the definitions
+in a standalone YAML and link to it via `data_file:`.  The linked file holds `enums:`
+today and will accommodate `buses:` and other data types in future:
 
 ```yaml
 # model YAML
-enum_file: ../shared/project_enums.yaml   # relative to the model YAML
+data_file: ../shared/project_types.yaml   # relative to the model YAML
 
-# ../shared/project_enums.yaml
+# ../shared/project_types.yaml
 enums:
   FanMode_e:
     ...

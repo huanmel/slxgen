@@ -12,11 +12,11 @@ YAML schema — inline in a model YAML file or in a standalone enum YAML:
           AUTO:    2
           MANUAL:  3
 
-Model YAML may also link a shared enum file:
+Model YAML may also link a shared data file (enums, and in future bus objects):
 
-    enum_file: ../shared/enums.yaml   # relative to the model YAML
+    data_file: ../shared/project_types.yaml   # relative to the model YAML
 
-If both ``enum_file`` and inline ``enums`` are present, the inline
+If both ``data_file`` and inline ``enums`` are present, the inline
 definitions take precedence (override) over the linked file.
 
 Generated file ``FanMode_e.m``:
@@ -103,7 +103,7 @@ def enum_classdef(name: str, spec: dict[str, Any]) -> str:
 def load_enums_from_yaml(yaml_path: str | Path) -> dict[str, dict]:
     """Load enum definitions referenced by a model YAML file.
 
-    Checks for ``enum_file`` (linked file loaded first) and then for an
+    Checks for ``data_file`` (linked file loaded first) and then for an
     inline ``enums`` key (overrides the linked file).  Returns ``{}`` when
     neither key is present.
     """
@@ -114,7 +114,7 @@ def load_enums_from_yaml(yaml_path: str | Path) -> dict[str, dict]:
 
     result: dict[str, dict] = {}
 
-    enum_file = chart.get('enum_file')
+    enum_file = chart.get('data_file')
     if enum_file:
         linked_path = yaml_path.parent / enum_file
         linked: dict = _yaml.safe_load(linked_path.read_text(encoding='utf-8'))
