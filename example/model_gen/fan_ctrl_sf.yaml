@@ -5,32 +5,32 @@
 # Compare draft vs. generated: run gen_fan_ctrl.py with PUML_ONLY=True
 #
 # Hierarchy:
-#   STANDBY                    — HVAC off; neutral fan position
-#   ACTIVE (compound)          — HVAC on; exits on ~hvac_on
-#     A_ENTRY (default)        — immediate routing: DEFROST or NORMAL on entry
-#     DEFROST                  — defrost mode; direction locked to WINDSCREEN
-#     NORMAL (compound)        — normal distribution control
+#   STANDBY                    — fan off; idle state
+#   ACTIVE (compound)          — fan running; exits on ~fan_on
+#     A_ENTRY (default)        — immediate routing: BOOST or NORMAL on entry
+#     BOOST                    — override mode; speed locked to HIGH
+#     NORMAL (compound)        — normal speed control
 #       N_ENTRY (default)      — immediate routing: AUTO or MANUAL (uses hist_auto)
-#       AUTO                   — TCU selects direction
-#       MANUAL (history)       — user-selected direction; resumes last active vent
-#         INIT (default)       — hold position; wait for first button press
-#         FACE / FOOT / WIND   — active vent direction
+#       AUTO                   — controller selects speed
+#       MANUAL (history)       — user-selected speed; resumes last active level
+#         INIT (default)       — hold speed; wait for first button press
+#         LOW / MED / HIGH     — active speed level
 
 name: FanCtrl
 
 inputs:
-  - {name: debTout,      type: uint8}
-  - {name: hvac_on,      type: boolean}   # HVAC system active
-  - {name: defr_active,  type: boolean}   # defrost request (level signal)
-  - {name: mode2auto,    type: boolean}   # AUTO mode request
-  - {name: mode2manual,  type: boolean}   # any direction button pressed
-  - {name: face_press,   type: boolean}   # face vent button
-  - {name: foot_press,   type: boolean}   # foot vent button
-  - {name: wind_press,   type: boolean}   # windscreen vent button
+  - {name: debTout,    type: uint8}
+  - {name: fan_on,     type: boolean}   # fan system active
+  - {name: boost_req,  type: boolean}   # boost override request (level signal)
+  - {name: mode2auto,  type: boolean}   # AUTO mode request
+  - {name: mode2manual,type: boolean}   # any speed button pressed
+  - {name: low_press,  type: boolean}   # LOW speed button
+  - {name: med_press,  type: boolean}   # MED speed button
+  - {name: high_press, type: boolean}   # HIGH speed button
 
 outputs:
-  - {name: fan_mode,  type: FanMode_e}
-  - {name: fan_dir,   type: FanDir_e}
+  - {name: fan_mode, type: FanMode_e}
+  - {name: fan_spd,  type: FanSpd_e}
 
 locals:
   - {name: hist_auto, type: boolean, initial_value: true}  # last active NORMAL branch
@@ -40,15 +40,15 @@ states:
     default: true
     en: |-
       fan_mode=FanMode_e.STANDBY;
-      fan_dir=FanDir_e.NEUTRAL;
+      fan_spd=FanSpd_e.OFF;
   ACTIVE:
     states:
       A_ENTRY:
         default: true
-      DEFROST:
+      BOOST:
         en: |-
-          fan_mode=FanMode_e.DEFROST;
-          fan_dir=FanDir_e.WINDSCREEN;
+          fan_mode=FanMode_e.BOOST;
+          fan_spd=FanSpd_e.HIGH;
       NORMAL:
         states:
           N_ENTRY:
@@ -56,7 +56,6 @@ states:
           AUTO:
             en: |-
               fan_mode=FanMode_e.AUTO;
-              fan_dir=FanDir_e.AUTO;
               hist_auto=true;
           MANUAL:
             history: true
@@ -67,44 +66,44 @@ states:
             states:
               INIT:
                 default: true
-              FACE:
-                en: fan_dir=FanDir_e.FACE;
-              FOOT:
-                en: fan_dir=FanDir_e.FOOT;
-              WIND:
-                en: fan_dir=FanDir_e.WINDSCREEN;
+              LOW:
+                en: fan_spd=FanSpd_e.LOW;
+              MED:
+                en: fan_spd=FanSpd_e.MED;
+              HIGH:
+                en: fan_spd=FanSpd_e.HIGH;
 
 transitions:
 
   # STANDBY ↔ ACTIVE
-  - {from: STANDBY,               to: ACTIVE,              trigger: "after(debTout,tick)", condition: "hvac_on",    order: '1'}
-  - {from: ACTIVE,                to: STANDBY,             trigger: "after(debTout,tick)", condition: "~hvac_on",   order: '1'}
+  - {from: STANDBY,                  to: ACTIVE,               trigger: "after(debTout,tick)", condition: "fan_on",    order: '1'}
+  - {from: ACTIVE,                   to: STANDBY,              trigger: "after(debTout,tick)", condition: "~fan_on",   order: '1'}
 
   # A_ENTRY: immediate routing (no trigger)
-  - {from: "ACTIVE.A_ENTRY",      to: "ACTIVE.DEFROST",    condition: "defr_active",       order: '1'}
-  - {from: "ACTIVE.A_ENTRY",      to: "ACTIVE.NORMAL",     condition: "~defr_active",      order: '2'}
+  - {from: "ACTIVE.A_ENTRY",         to: "ACTIVE.BOOST",       condition: "boost_req",         order: '1'}
+  - {from: "ACTIVE.A_ENTRY",         to: "ACTIVE.NORMAL",      condition: "~boost_req",        order: '2'}
 
-  # NORMAL compound ↔ DEFROST
-  - {from: "ACTIVE.NORMAL",       to: "ACTIVE.DEFROST",    trigger: "after(debTout,tick)", condition: "defr_active",  order: '1'}
-  - {from: "ACTIVE.DEFROST",      to: "ACTIVE.NORMAL",     trigger: "after(debTout,tick)", condition: "~defr_active", order: '1'}
+  # NORMAL compound ↔ BOOST
+  - {from: "ACTIVE.NORMAL",          to: "ACTIVE.BOOST",       trigger: "after(debTout,tick)", condition: "boost_req",  order: '1'}
+  - {from: "ACTIVE.BOOST",           to: "ACTIVE.NORMAL",      trigger: "after(debTout,tick)", condition: "~boost_req", order: '1'}
 
   # N_ENTRY: immediate routing (no trigger)
-  - {from: "ACTIVE.NORMAL.N_ENTRY", to: "ACTIVE.NORMAL.AUTO",   condition: "mode2auto || (hist_auto && ~mode2manual)", order: '1'}
-  - {from: "ACTIVE.NORMAL.N_ENTRY", to: "ACTIVE.NORMAL.MANUAL", condition: "mode2manual || ~hist_auto",                order: '2'}
+  - {from: "ACTIVE.NORMAL.N_ENTRY",  to: "ACTIVE.NORMAL.AUTO",   condition: "mode2auto || (hist_auto && ~mode2manual)", order: '1'}
+  - {from: "ACTIVE.NORMAL.N_ENTRY",  to: "ACTIVE.NORMAL.MANUAL", condition: "mode2manual || ~hist_auto",                order: '2'}
 
   # AUTO ↔ MANUAL
-  - {from: "ACTIVE.NORMAL.AUTO",   to: "ACTIVE.NORMAL.MANUAL", trigger: "after(debTout,tick)", condition: "mode2manual", order: '1'}
-  - {from: "ACTIVE.NORMAL.MANUAL", to: "ACTIVE.NORMAL.AUTO",   trigger: "after(debTout,tick)", condition: "mode2auto",   order: '1'}
+  - {from: "ACTIVE.NORMAL.AUTO",     to: "ACTIVE.NORMAL.MANUAL", trigger: "after(debTout,tick)", condition: "mode2manual", order: '1'}
+  - {from: "ACTIVE.NORMAL.MANUAL",   to: "ACTIVE.NORMAL.AUTO",   trigger: "after(debTout,tick)", condition: "mode2auto",   order: '1'}
 
-  # MANUAL.INIT → direction
-  - {from: "ACTIVE.NORMAL.MANUAL.INIT", to: "ACTIVE.NORMAL.MANUAL.FACE", trigger: "after(debTout,tick)", condition: "face_press", order: '1'}
-  - {from: "ACTIVE.NORMAL.MANUAL.INIT", to: "ACTIVE.NORMAL.MANUAL.FOOT", trigger: "after(debTout,tick)", condition: "foot_press", order: '2'}
-  - {from: "ACTIVE.NORMAL.MANUAL.INIT", to: "ACTIVE.NORMAL.MANUAL.WIND", trigger: "after(debTout,tick)", condition: "wind_press", order: '3'}
+  # MANUAL.INIT → speed selection
+  - {from: "ACTIVE.NORMAL.MANUAL.INIT", to: "ACTIVE.NORMAL.MANUAL.LOW",  trigger: "after(debTout,tick)", condition: "low_press",  order: '1'}
+  - {from: "ACTIVE.NORMAL.MANUAL.INIT", to: "ACTIVE.NORMAL.MANUAL.MED",  trigger: "after(debTout,tick)", condition: "med_press",  order: '2'}
+  - {from: "ACTIVE.NORMAL.MANUAL.INIT", to: "ACTIVE.NORMAL.MANUAL.HIGH", trigger: "after(debTout,tick)", condition: "high_press", order: '3'}
 
-  # MANUAL: direction ↔ direction
-  - {from: "ACTIVE.NORMAL.MANUAL.FACE", to: "ACTIVE.NORMAL.MANUAL.FOOT", trigger: "after(debTout,tick)", condition: "foot_press", order: '1'}
-  - {from: "ACTIVE.NORMAL.MANUAL.FACE", to: "ACTIVE.NORMAL.MANUAL.WIND", trigger: "after(debTout,tick)", condition: "wind_press", order: '2'}
-  - {from: "ACTIVE.NORMAL.MANUAL.FOOT", to: "ACTIVE.NORMAL.MANUAL.FACE", trigger: "after(debTout,tick)", condition: "face_press", order: '1'}
-  - {from: "ACTIVE.NORMAL.MANUAL.FOOT", to: "ACTIVE.NORMAL.MANUAL.WIND", trigger: "after(debTout,tick)", condition: "wind_press", order: '2'}
-  - {from: "ACTIVE.NORMAL.MANUAL.WIND", to: "ACTIVE.NORMAL.MANUAL.FACE", trigger: "after(debTout,tick)", condition: "face_press", order: '1'}
-  - {from: "ACTIVE.NORMAL.MANUAL.WIND", to: "ACTIVE.NORMAL.MANUAL.FOOT", trigger: "after(debTout,tick)", condition: "foot_press", order: '2'}
+  # MANUAL: speed ↔ speed
+  - {from: "ACTIVE.NORMAL.MANUAL.LOW",  to: "ACTIVE.NORMAL.MANUAL.MED",  trigger: "after(debTout,tick)", condition: "med_press",  order: '1'}
+  - {from: "ACTIVE.NORMAL.MANUAL.LOW",  to: "ACTIVE.NORMAL.MANUAL.HIGH", trigger: "after(debTout,tick)", condition: "high_press", order: '2'}
+  - {from: "ACTIVE.NORMAL.MANUAL.MED",  to: "ACTIVE.NORMAL.MANUAL.LOW",  trigger: "after(debTout,tick)", condition: "low_press",  order: '1'}
+  - {from: "ACTIVE.NORMAL.MANUAL.MED",  to: "ACTIVE.NORMAL.MANUAL.HIGH", trigger: "after(debTout,tick)", condition: "high_press", order: '2'}
+  - {from: "ACTIVE.NORMAL.MANUAL.HIGH", to: "ACTIVE.NORMAL.MANUAL.LOW",  trigger: "after(debTout,tick)", condition: "low_press",  order: '1'}
+  - {from: "ACTIVE.NORMAL.MANUAL.HIGH", to: "ACTIVE.NORMAL.MANUAL.MED",  trigger: "after(debTout,tick)", condition: "med_press",  order: '2'}

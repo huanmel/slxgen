@@ -8,16 +8,16 @@
 ' verify the YAML correctly captures this intent.
 '
 ' Hierarchy:
-'   STANDBY                  — HVAC off; neutral fan position
-'   ACTIVE (compound)        — HVAC on
-'     A_ENTRY (immediate)    — routes to DEFROST or NORMAL on ACTIVE entry
-'     DEFROST                — defrost locked to windscreen; exits when level drops
-'     NORMAL (compound)      — normal mode control
+'   STANDBY                  — fan off; idle state
+'   ACTIVE (compound)        — fan running
+'     A_ENTRY (immediate)    — routes to BOOST or NORMAL on ACTIVE entry
+'     BOOST                  — override mode; locks to HIGH; exits when request drops
+'     NORMAL (compound)      — normal speed control
 '       N_ENTRY (immediate)  — routes to AUTO or MANUAL (uses hist_auto)
-'       AUTO                 — TCU selects direction
-'       MANUAL (history)     — user-selected direction
-'         INIT (default)     — wait for first button press
-'         FACE / FOOT / WIND
+'       AUTO                 — controller selects speed
+'       MANUAL (history)     — user-selected speed
+'         INIT (default)     — hold last speed; wait for first button press
+'         LOW / MED / HIGH
 
 [*] --> STANDBY
 
@@ -25,7 +25,7 @@ state STANDBY
 state ACTIVE {
   [*] --> A_ENTRY
   state A_ENTRY
-  state DEFROST
+  state BOOST
   state NORMAL {
     [*] --> N_ENTRY
     state N_ENTRY
@@ -33,39 +33,39 @@ state ACTIVE {
     state MANUAL {
       [*] --> INIT
       state INIT
-      state FACE
-      state FOOT
-      state WIND
+      state LOW
+      state MED
+      state HIGH
     }
   }
 }
 
-STANDBY : en:\nfan_mode=FanMode_e.STANDBY;\nfan_dir=FanDir_e.NEUTRAL;
-AUTO    : en:\nfan_mode=FanMode_e.AUTO;\nfan_dir=FanDir_e.AUTO;\nhist_auto=true;
+STANDBY : en:\nfan_mode=FanMode_e.STANDBY;\nfan_spd=FanSpd_e.OFF;
+AUTO    : en:\nfan_mode=FanMode_e.AUTO;\nhist_auto=true;
 MANUAL  : en:\nfan_mode=FanMode_e.MANUAL;\nhist_auto=false;
-FACE    : en:\nfan_dir=FanDir_e.FACE;
-FOOT    : en:\nfan_dir=FanDir_e.FOOT;
-WIND    : en:\nfan_dir=FanDir_e.WINDSCREEN;
-DEFROST : en:\nfan_mode=FanMode_e.DEFROST;\nfan_dir=FanDir_e.WINDSCREEN;
+LOW     : en:\nfan_spd=FanSpd_e.LOW;
+MED     : en:\nfan_spd=FanSpd_e.MED;
+HIGH    : en:\nfan_spd=FanSpd_e.HIGH;
+BOOST   : en:\nfan_mode=FanMode_e.BOOST;\nfan_spd=FanSpd_e.HIGH;
 
-STANDBY  --> ACTIVE  : after(debTout,tick) [hvac_on]
-ACTIVE   --> STANDBY : after(debTout,tick) [~hvac_on]
-A_ENTRY  --> DEFROST : [defr_active]
-A_ENTRY  --> NORMAL  : [~defr_active]
-NORMAL   --> DEFROST : after(debTout,tick) [defr_active]
-DEFROST  --> NORMAL  : after(debTout,tick) [~defr_active]
-N_ENTRY  --> AUTO    : [mode2auto || (hist_auto && ~mode2manual)]
-N_ENTRY  --> MANUAL  : [mode2manual || ~hist_auto]
-AUTO     --> MANUAL  : after(debTout,tick) [mode2manual]
-MANUAL   --> AUTO    : after(debTout,tick) [mode2auto]
-INIT     --> FACE    : after(debTout,tick) [face_press]
-INIT     --> FOOT    : after(debTout,tick) [foot_press]
-INIT     --> WIND    : after(debTout,tick) [wind_press]
-FACE     --> FOOT    : after(debTout,tick) [foot_press]
-FACE     --> WIND    : after(debTout,tick) [wind_press]
-FOOT     --> FACE    : after(debTout,tick) [face_press]
-FOOT     --> WIND    : after(debTout,tick) [wind_press]
-WIND     --> FACE    : after(debTout,tick) [face_press]
-WIND     --> FOOT    : after(debTout,tick) [foot_press]
+STANDBY --> ACTIVE  : after(debTout,tick) [fan_on]
+ACTIVE  --> STANDBY : after(debTout,tick) [~fan_on]
+A_ENTRY --> BOOST   : [boost_req]
+A_ENTRY --> NORMAL  : [~boost_req]
+NORMAL  --> BOOST   : after(debTout,tick) [boost_req]
+BOOST   --> NORMAL  : after(debTout,tick) [~boost_req]
+N_ENTRY --> AUTO    : [mode2auto || (hist_auto && ~mode2manual)]
+N_ENTRY --> MANUAL  : [mode2manual || ~hist_auto]
+AUTO    --> MANUAL  : after(debTout,tick) [mode2manual]
+MANUAL  --> AUTO    : after(debTout,tick) [mode2auto]
+INIT    --> LOW     : after(debTout,tick) [low_press]
+INIT    --> MED     : after(debTout,tick) [med_press]
+INIT    --> HIGH    : after(debTout,tick) [high_press]
+LOW     --> MED     : after(debTout,tick) [med_press]
+LOW     --> HIGH    : after(debTout,tick) [high_press]
+MED     --> LOW     : after(debTout,tick) [low_press]
+MED     --> HIGH    : after(debTout,tick) [high_press]
+HIGH    --> LOW     : after(debTout,tick) [low_press]
+HIGH    --> MED     : after(debTout,tick) [med_press]
 
 @enduml
