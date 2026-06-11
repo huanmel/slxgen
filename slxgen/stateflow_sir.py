@@ -629,12 +629,13 @@ def sf_yaml_to_puml(yaml_path: str | Path,
     If output_path is provided, also writes the result to disk.
     """
     import yaml as _yaml
-
+    print(f"Generating PlantUML from {yaml_path}...")
     chart_dict = _yaml.safe_load(Path(yaml_path).read_text(encoding='utf-8'))
     sir = yaml_to_sir(chart_dict, default_size=default_size)
     text = sir_to_puml(sir)
     if output_path is not None:
         Path(output_path).write_text(text, encoding='utf-8')
+        print(f"PlantUML diagram written to {output_path}")
     return text
 
 
