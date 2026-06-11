@@ -448,6 +448,63 @@ Requires Priority 3 (plugin system) and Priority 7 (predicate extraction) first.
 
 ---
 
+## Documentation improvements
+
+The GitHub Pages site (`huanmel.github.io/slxgen`) is live.  The plan below
+describes what to add over time to make it a useful reference for new users.
+
+### Dx1 — Getting-started page
+
+A short `docs/getting-started.md` that covers installation, a minimal YAML, and
+a first pipeline run.  Shorter and more task-focused than the full `workflow.md`.
+
+```text
+docs/getting-started.md
+  1. Install (pip install slxgen, MATLAB setup)
+  2. Write a 3-state YAML
+  3. sf_yaml_to_puml() → check the diagram
+  4. run_pipeline(..., run_matlab=False) → inspect the .m
+  5. run_pipeline(..., run_matlab=True) → open the .slx
+```
+
+### Dx2 — Screenshots and diagrams
+
+Visual evidence of what the tool produces — the single most useful thing for
+a new user evaluating whether to use slxgen.
+
+| Asset | How to create | Where to put |
+| ----- | ------------- | ------------ |
+| `fanctrl_stateflow.png` | Export PNG from MATLAB/Simulink after running `gen_fan_ctrl.py` | `docs/assets/` |
+| `fanctrl_puml.png` | Export from VS Code PlantUML extension (`Alt+D` → save image) | `docs/assets/` |
+| `pipeline_diagram.svg` | Draw in any tool (draw.io, excalidraw) showing YAML→SIR→.slx | `docs/assets/` |
+
+Embed in workflow.md or a dedicated gallery page:
+
+```markdown
+![FanCtrl in Stateflow](assets/fanctrl_stateflow.png)
+```
+
+### Dx3 — Worked example page
+
+A dedicated page that walks through the complete `fan_ctrl` example end-to-end:
+
+1. Read `fan_ctrl_draft.puml` — the hand-drawn prototype
+2. Compare with `fan_ctrl_gen.puml` — generated from the YAML
+3. Show the generated `FanMode_e.m` classdef
+4. Show the Stateflow screenshot
+
+Links to all files in `example/model_gen/`.  The content already exists in
+`workflow.md §1.3` — this would extract and expand it into its own page with
+images.
+
+### Dx4 — Modeling guidelines page
+
+Extract and publish `docs/stateflow_model_creation_guideline.md` as a
+user-facing page.  Currently it is in `docs/` but not linked from `index.md`.
+Review for anything project-internal before publishing.
+
+---
+
 ## Decisions and constraints
 
 - **`sir_to_matlab()` is not planned.** The `sir_to_chart_dict()` bridge handles all

@@ -1,0 +1,10 @@
+title: slxgen
+description: Specs-driven Stateflow model generator for MATLAB/Simulink.
+theme: minima
+
+header_pages:
+  - workflow.md
+  - roadmap.md
+  - architecture.md
+  - algorithms.md
+  - stateflow_model_creation_guideline.md
