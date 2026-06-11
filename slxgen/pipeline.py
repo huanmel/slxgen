@@ -43,6 +43,8 @@ def run_pipeline(
     session_name='slxgen',
     open_desktop=False,
     lint=True,
+    gen_enums=True,
+    gen_sldd=False,
     elk_options=None,
     adaptive_leaf_width=False,
     adaptive_spacing=False,
@@ -76,6 +78,16 @@ def run_pipeline(
         Has no effect when connecting to an existing shared session.
     lint : bool
         Run sfLintChart on the generated .slx (only when run_matlab=True).
+    gen_enums : bool
+        Generate MATLAB classdef ``.m`` files for any ``enums:`` / ``enum_file:``
+        definitions found in the YAML and write them to *out_dir*.  Defaults to
+        ``True``; set to ``False`` to skip.
+    gen_sldd : bool
+        Generate a ``<stem>_sldd.m`` script that creates/updates a Simulink Data
+        Dictionary (``.sldd``) containing the enum type definitions.  When
+        *run_matlab* is also ``True``, the script is executed before the model
+        build so the dictionary is ready before Simulink opens the model.
+        Defaults to ``False``.
     elk_options : dict | None
         ELK layout options forwarded to sf_yaml_to_matlab.
     default_size : list | None
@@ -100,6 +112,9 @@ def run_pipeline(
         sir     : Path | None — SIR JSON (None if dump_sir=False)
         issues  : list[str]   — SIR validation messages (WARNING/ERROR prefix)
         lint    : list[dict]  — sfLintChart findings (empty when skipped)
+        enums   : list[Path]  — enum classdef .m files written (empty if none)
+        sldd_script : Path | None — SLDD creation script (None if gen_sldd=False)
+        sldd    : Path | None — data dictionary built by MATLAB (None if not run)
 
     Raises
     ------
@@ -179,12 +194,37 @@ def run_pipeline(
         print(f'  Written     : {script_path}')
         print(f'  Size        : {lines} lines')
 
+    enum_paths: list[Path] = []
+    sldd_script_path: Path | None = None
+    if gen_enums or gen_sldd:
+        from .enum_gen import load_enums_from_yaml, write_enum_classdefs, enum_sldd_script
+        _enums = load_enums_from_yaml(yaml_path)
+        if _enums:
+            if gen_enums:
+                enum_paths = write_enum_classdefs(_enums, out_dir)
+                if verbose:
+                    for p in enum_paths:
+                        print(f'  Enum .m     : {p.name}')
+            if gen_sldd:
+                sldd_dir = out_dir / 'sldd_gen'
+                sldd_dir.mkdir(exist_ok=True)
+                sldd_script_path = sldd_dir / (yaml_path.stem + '_sldd.m')
+                sldd_script_path.write_text(
+                    enum_sldd_script(_enums, yaml_path.stem),
+                    encoding='utf-8',
+                )
+                if verbose:
+                    print(f'  SLDD script : sldd_gen/{sldd_script_path.name}')
+
     result = {
         'script': script_path,
         'slx': None,
         'sir': sir_json_path,
         'issues': validation_issues,
         'lint': [],
+        'enums': enum_paths,
+        'sldd_script': sldd_script_path,
+        'sldd': None,
     }
 
     if not run_matlab:
@@ -240,9 +280,23 @@ def run_pipeline(
     if _stale_slx.exists():
         _stale_slx.unlink()
 
+    eng.cd(str(out_dir), nargout=0)
+
+    if gen_sldd and sldd_script_path is not None:
+        sldd_dir = sldd_script_path.parent
+        if verbose:
+            print(f'  Running     : sldd_gen/{sldd_script_path.name}  (create/update .sldd)')
+        eng.cd(str(sldd_dir), nargout=0)
+        eng.run(str(sldd_script_path), nargout=0)
+        sldd_path = sldd_dir / (yaml_path.stem + '.sldd')
+        result['sldd'] = sldd_path
+        if verbose:
+            status = 'OK' if sldd_path.exists() else 'NOT FOUND'
+            print(f'  SLDD        : sldd_gen/{sldd_path.name}  [{status}]')
+        eng.cd(str(out_dir), nargout=0)
+
     if verbose:
         print(f'  Running     : {script_path.name}')
-    eng.cd(str(out_dir), nargout=0)
     eng.run(str(script_path), nargout=0)
 
     slx_path = out_dir / (model_name + '.slx')

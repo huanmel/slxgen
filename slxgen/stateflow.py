@@ -747,6 +747,15 @@ def _escape_matlab_str(s: str) -> str:
     return s.replace("'", "''")
 
 
+def _sf_type_method(type_str: str) -> str:
+    """Return the Stateflow Props.Type.Method for a given type string.
+
+    Types beginning with 'Enum:' map to 'Enumerated'; everything else is
+    a built-in numeric or boolean type.
+    """
+    return 'Enumerated' if type_str.startswith('Enum:') else 'Built-in'
+
+
 def _matlab_initial_value(v) -> str:
     """Convert a YAML initial_value to a MATLAB Props.InitialValue string.
 
@@ -969,7 +978,7 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: 'str | None' = None,
         lines.append(f"{v}.Name = '{_escape_matlab_str(d['name'])}';")
         lines.append(f"{v}.Scope = 'Input';")
         if d.get('type'):
-            lines.append(f"{v}.Props.Type.Method = 'Built-in';")
+            lines.append(f"{v}.Props.Type.Method = '{_sf_type_method(d['type'])}';")
             lines.append(f"{v}.DataType = '{_escape_matlab_str(d['type'])}';")
         if d.get('initial_value') is not None:
             lines.append(f"{v}.Props.InitialValue = '{_matlab_initial_value(d['initial_value'])}';")
@@ -987,7 +996,7 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: 'str | None' = None,
         lines.append(f"{v}.Name = '{_escape_matlab_str(d['name'])}';")
         lines.append(f"{v}.Scope = 'Output';")
         if d.get('type'):
-            lines.append(f"{v}.Props.Type.Method = 'Built-in';")
+            lines.append(f"{v}.Props.Type.Method = '{_sf_type_method(d['type'])}';")
             lines.append(f"{v}.DataType = '{_escape_matlab_str(d['type'])}';")
         if d.get('initial_value') is not None:
             lines.append(f"{v}.Props.InitialValue = '{_matlab_initial_value(d['initial_value'])}';")
@@ -1005,7 +1014,7 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: 'str | None' = None,
         lines.append(f"{v}.Name = '{_escape_matlab_str(d['name'])}';")
         lines.append(f"{v}.Scope = 'Local';")
         if d.get('type'):
-            lines.append(f"{v}.Props.Type.Method = 'Built-in';")
+            lines.append(f"{v}.Props.Type.Method = '{_sf_type_method(d['type'])}';")
             lines.append(f"{v}.DataType = '{_escape_matlab_str(d['type'])}';")
         if d.get('initial_value') is not None:
             lines.append(f"{v}.Props.InitialValue = '{_matlab_initial_value(d['initial_value'])}';")

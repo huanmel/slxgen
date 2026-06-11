@@ -9,6 +9,7 @@
     - [1.1 For human authors](#11-for-human-authors)
     - [1.2 For LLM-assisted authoring](#12-for-llm-assisted-authoring)
     - [1.3 PlantUML-first prototyping](#13-plantuml-first-prototyping)
+    - [1.4 Enum type definitions](#14-enum-type-definitions)
   - [2. The edit-validate loop](#2-the-edit-validate-loop)
   - [3. Validation output — what each message means](#3-validation-output--what-each-message-means)
   - [4. Running the tools](#4-running-the-tools)
@@ -90,27 +91,35 @@ name: ChartName
 
 inputs:
   - {name: signal_in, type: boolean}
-  - {name: vec_in, type: single, size: [3, 1]}  # 3×1 vector  → Props.Array.Size = '[3 1]'
-  - {name: sc_in,  type: uint8,  size: [1]}    # explicit scalar → Props.Array.Size = '[1]'
-  - {name: inh_in, type: single, size: [-1]}   # inherited      → Props.Array.Size = '[-1]'
-  - {name: def_in, type: boolean}              # size: omitted  → controlled by default_size
+  - {name: vec_in,    type: single,         size: [3, 1]}  # 3×1 vector
+  - {name: sc_in,     type: uint8,          size: [1]}     # explicit scalar
+  - {name: inh_in,    type: single,         size: [-1]}    # inherited
+  - {name: def_in,    type: boolean}                       # size: omitted → controlled by default_size
+  - {name: mode_in,   type: "Enum: MyMode_e"}              # enumerated type
 
 outputs:
-  - {name: mode_out, type: uint8, initial_value: 0, size: [1]}  # size: applies to outputs too
+  - {name: mode_out,  type: "Enum: MyMode_e"}              # enumerated output — Method=Enumerated
+  - {name: count_out, type: uint8, initial_value: 0}
 
 locals:
-  - {name: counter, type: uint8, initial_value: 0, size: [1]}   # and to locals
+  - {name: counter,   type: uint8, initial_value: 0}
 
-  # size: and default_size apply equally to inputs, outputs, and locals.
-  # size: omitted + default_size=None (default) → no Props.Array.Size emitted; Stateflow decides
-  # size: omitted + default_size=[1]            → Props.Array.Size = '[1]' (explicit scalar)
-  # size: omitted + default_size=[-1]           → Props.Array.Size = '[-1]' (explicit inherited)
+  # size: applies equally to inputs, outputs, and locals.
+  # size: omitted + default_size=None → no Props.Array.Size (Stateflow decides)
+  # size: omitted + default_size=[1]  → Props.Array.Size = '[1]'  (explicit scalar)
+  # size: omitted + default_size=[-1] → Props.Array.Size = '[-1]' (explicit inherited)
 
-outputs:
-  - {name: mode_out, type: uint8, initial_value: 0}
+enums:                          # optional — inline enum definitions
+  MyMode_e:
+    storage: int8               # optional; MATLAB default is int32
+    default: MODE_A             # optional; first member used if omitted
+    members:
+      MODE_A: 0
+      MODE_B: 1
+      MODE_C: 2
 
-locals:
-  - {name: counter, type: uint8, initial_value: 0}
+enum_file: path/to/enums.yaml   # optional — link a shared enum YAML (relative to this file)
+                                 # inline enums: override same-named types from the linked file
 
 states:
   STATE_A:
@@ -254,6 +263,69 @@ variable declarations (inputs / outputs / locals).
 
 ---
 
+### 1.4 Enum type definitions
+
+Stateflow variables typed with user-defined enumerations use the `"Enum: TypeName"` syntax
+in the `type:` field.  The enum definitions themselves live either inline in the model YAML
+or in a shared file linked via `enum_file:`.
+
+**Inline enum definitions:**
+
+```yaml
+outputs:
+  - {name: fan_mode, type: "Enum: FanMode_e"}
+  - {name: fan_spd,  type: "Enum: FanSpd_e"}
+
+enums:
+  FanMode_e:
+    storage: int8      # optional; omit for int32
+    default: STANDBY   # optional; first member used if omitted
+    members:
+      STANDBY: 0
+      BOOST:   1
+      AUTO:    2
+      MANUAL:  3
+  FanSpd_e:
+    storage: int8
+    default: 'OFF'     # quote OFF/ON/YES/NO — PyYAML parses them as booleans otherwise
+    members:
+      'OFF': 0
+      LOW:   1
+      MED:   2
+      HIGH:  3
+```
+
+**Shared enum file** — when the same types are used by multiple models, put the definitions
+in a standalone YAML and link to it:
+
+```yaml
+# model YAML
+enum_file: ../shared/project_enums.yaml   # relative to the model YAML
+
+# ../shared/project_enums.yaml
+enums:
+  FanMode_e:
+    ...
+```
+
+Inline `enums:` entries override any same-named type from the linked file.
+
+**Generated outputs** — `run_pipeline` produces two enum artefacts automatically:
+
+| Option | Default | Output |
+| ------ | ------- | ------ |
+| `gen_enums=True` | on | One `<TypeName>.m` classdef file per type in `out_dir`; MATLAB resolves types from these files at simulation time |
+| `gen_sldd=True` | off | `sldd_gen/<stem>_sldd.m` script; when `run_matlab=True` this script runs first and creates `sldd_gen/<stem>.sldd` — a Simulink Data Dictionary containing the type definitions for production use |
+
+The classdef `.m` files and the `.sldd` must be in separate directories because `importEnumTypes`
+requires the classdef files not to be on the path when importing into the dictionary.
+`gen_sldd` places everything under `sldd_gen/` to keep them separate automatically.
+
+See `example/model_gen/fan_ctrl_sf.yaml` and `example/model_gen/gen_fan_ctrl.py` for a
+complete working example.
+
+---
+
 ## 2. The edit-validate loop
 
 The core workflow. Keep the loop tight — structure errors found early are cheap;
@@ -371,6 +443,8 @@ run_pipeline(
     session_name='slxgen',  # shared MATLAB session name
     open_desktop=False,     # True = open full MATLAB GUI when starting new engine
     lint=True,
+    gen_enums=True,         # write <TypeName>.m classdef files to out_dir (default: True)
+    gen_sldd=False,         # generate + run sldd_gen/<stem>_sldd.m → sldd_gen/<stem>.sldd
 )
 ```
 

@@ -1,0 +1,51 @@
+@startuml FanCtrl
+
+[*] --> STANDBY
+state STANDBY
+state ACTIVE {
+  [*] --> A_ENTRY
+  state A_ENTRY
+  state BOOST
+  state NORMAL {
+    [*] --> N_ENTRY
+    state N_ENTRY
+    state AUTO
+    state MANUAL {
+      [*] --> INIT
+      state INIT
+      state HIGH
+      state LOW
+      state MED
+    }
+  }
+}
+
+STANDBY : entry / fan_mode=FanMode_e.STANDBY;\nfan_spd=FanSpd_e.OFF;
+BOOST : entry / fan_mode=FanMode_e.BOOST;\nfan_spd=FanSpd_e.HIGH;
+AUTO : entry / fan_mode=FanMode_e.AUTO;\nhist_auto=true;
+MANUAL : entry / fan_mode=FanMode_e.MANUAL;\nhist_auto=false;
+LOW : entry / fan_spd=FanSpd_e.LOW;
+MED : entry / fan_spd=FanSpd_e.MED;
+HIGH : entry / fan_spd=FanSpd_e.HIGH;
+
+STANDBY --> ACTIVE : after(debTout,tick) [fan_on]
+ACTIVE --> STANDBY : after(debTout,tick) [~fan_on]
+A_ENTRY --> BOOST : [boost_req]
+A_ENTRY --> NORMAL : [~boost_req]
+NORMAL --> BOOST : after(debTout,tick) [boost_req]
+BOOST --> NORMAL : after(debTout,tick) [~boost_req]
+N_ENTRY --> AUTO : [mode2auto || (hist_auto && ~mode2manual)]
+N_ENTRY --> MANUAL : [mode2manual || ~hist_auto]
+AUTO --> MANUAL : after(debTout,tick) [mode2manual]
+MANUAL --> AUTO : after(debTout,tick) [mode2auto]
+INIT --> LOW : after(debTout,tick) [low_press]
+INIT --> MED : after(debTout,tick) [med_press]
+INIT --> HIGH : after(debTout,tick) [high_press]
+LOW --> MED : after(debTout,tick) [med_press]
+LOW --> HIGH : after(debTout,tick) [high_press]
+MED --> LOW : after(debTout,tick) [low_press]
+MED --> HIGH : after(debTout,tick) [high_press]
+HIGH --> LOW : after(debTout,tick) [low_press]
+HIGH --> MED : after(debTout,tick) [med_press]
+
+@enduml

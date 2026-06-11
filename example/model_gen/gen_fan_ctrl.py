@@ -12,7 +12,7 @@ Demonstrates docs/workflow.md §1.3:
           Open both .puml files side-by-side to verify the YAML captures
           every state, transition, and action from the original draft.
 
-  Step 4  PUML_ONLY=False       run_pipeline() → Stateflow .slx
+  Step 4  PUML_ONLY=False       generate enum .m files + run_pipeline() → .slx
 
 MATLAB setup (one-time):
   >> matlab.engine.shareEngine('slxgen')
@@ -24,8 +24,8 @@ HERE = Path(__file__).parent
 YAML = HERE / 'fan_ctrl_sf.yaml'
 
 # True  → re-export YAML → fan_ctrl_gen.puml, then compare with fan_ctrl_draft.puml
-# False → run full pipeline → Stateflow .slx
-PUML_ONLY = True
+# False → generate enum .m files + run full pipeline → Stateflow .slx
+PUML_ONLY = False
 
 if PUML_ONLY:
     out = HERE / 'fan_ctrl_gen.puml'
@@ -40,6 +40,8 @@ else:
     run_pipeline(
         YAML,
         model_name='FanCtrl',
+        gen_enums=True,
+        gen_sldd=True,
         dump_sir=True,
         run_matlab=True,
         session_name='slxgen',

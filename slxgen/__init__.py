@@ -15,6 +15,7 @@ from .slx2txt import (
 from .slx_lint import slx_lint, print_lint_report
 from .pipeline import run_pipeline
 from .stateflow_sir import sir_to_mermaid, sf_yaml_to_mermaid, sir_to_puml, sf_yaml_to_puml
+from .enum_gen import sf_yaml_to_enum_classdefs, sf_yaml_to_sldd_script
 
 __all__ = [
     'parse_slx',
@@ -36,4 +37,6 @@ __all__ = [
     'sf_yaml_to_mermaid',
     'sir_to_puml',
     'sf_yaml_to_puml',
+    'sf_yaml_to_enum_classdefs',
+    'sf_yaml_to_sldd_script',
 ]

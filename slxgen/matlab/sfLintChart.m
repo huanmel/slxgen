@@ -109,12 +109,29 @@ for ci = 1:numel(containers)
     end
 
     % -- 3b. Unreachable states -------------------------------------------
+    % A direct child S is reachable when any transition has:
+    %   (a) Destination.Path == cFull  (target IS the direct child), OR
+    %   (b) Destination.Path starts with [cFull '/' S.Name]
+    %       (target is a deep substate of S — entering S transitively).
     if ~isAndContainer
         reachableNames = {};
+        deepPrefix = [cFull '/'];
+        deepPLen   = length(deepPrefix);
         for ti = 1:numel(allTrans)
             t = allTrans(ti);
-            if ~isempty(t.Destination) && strcmp(t.Destination.Path, cFull)
+            if isempty(t.Destination), continue; end
+            if strcmp(t.Destination.Path, cFull)
+                % (a) direct child targeted
                 reachableNames{end+1} = t.Destination.Name; %#ok<AGROW>
+            elseif strncmp(t.Destination.Path, deepPrefix, deepPLen)
+                % (b) deep substate: extract the direct-child name from the path
+                remainder = t.Destination.Path(deepPLen+1:end);
+                slashIdx  = strfind(remainder, '/');
+                if isempty(slashIdx)
+                    reachableNames{end+1} = remainder; %#ok<AGROW>
+                else
+                    reachableNames{end+1} = remainder(1:slashIdx(1)-1); %#ok<AGROW>
+                end
             end
         end
         for si = 1:numel(childStates)

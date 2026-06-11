@@ -42,6 +42,14 @@ ELK layout engine are unchanged.
 the recommended visual preview format (encodes `en`/`du`/`ex` actions); Mermaid is the
 lightweight structure-only alternative. See `docs/workflow.md §4.4`.
 
+**Enum codegen (done):** `enum_gen.py` generates MATLAB artefacts from `enums:` /
+`enum_file:` definitions in the model YAML.  Two outputs: `<TypeName>.m` classdef files
+(simulation-ready, no MATLAB required to generate) and a `sldd_gen/<stem>_sldd.m` script
+that creates a Simulink Data Dictionary for production use.  Both are wired into
+`run_pipeline` via `gen_enums=True` (default) and `gen_sldd=False` (opt-in).
+Variable types use `"Enum: TypeName"` syntax; the generator emits
+`Props.Type.Method = 'Enumerated'` automatically. See `docs/workflow.md §1.4`.
+
 ---
 
 ## Project layer architecture
@@ -56,6 +64,7 @@ All work is assigned to one of these layers. Keeps scope clear.
 | **Config / filter** | (planned) `ValidationConfig` + plugin check sets | `stateflow_sir.py`, new `stateflow_checks.py` |
 | **Compiler / SF generator** | `stateflow_dict_to_matlab()` — frozen | `stateflow.py` |
 | **Layout engine** | ELK + post-ELK placement | `elk_layout.py`, `stateflow.py` |
+| **Enum codegen** | `sf_yaml_to_enum_classdefs()` → classdef `.m`; `sf_yaml_to_sldd_script()` → SLDD init script | `enum_gen.py` |
 | **Alt backends** | Mermaid + PlantUML export ✓; PlantUML import (planned) | `stateflow_sir.py`, new `puml_import.py` |
 
 ---
