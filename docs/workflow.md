@@ -1,6 +1,6 @@
 # slxgen — Authoring Workflow
 
-**Last updated:** May 2026
+**Last updated:** June 2026
 
 ---
 
@@ -14,7 +14,8 @@
     - [4.1 Quick start — full pipeline in one call](#41-quick-start--full-pipeline-in-one-call)
     - [4.2 MATLAB session setup (recommended one-time step)](#42-matlab-session-setup-recommended-one-time-step)
     - [4.3 Validate + generate (explicit pipeline)](#43-validate--generate-explicit-pipeline)
-    - [4.4 Inspect, compare, and extract](#44-inspect-compare-and-extract)
+    - [4.4 PlantUML visual preview](#44-plantuml-visual-preview)
+    - [4.5 Inspect, compare, and extract](#45-inspect-compare-and-extract)
   - [5. Tips for LLM-assisted authoring](#5-tips-for-llm-assisted-authoring)
 
 ---
@@ -158,12 +159,17 @@ Step 4 — Validate + visual preview
   python example/model_gen/gen_Ex1.py   (or your own gen script)
   → ERRORs and WARNINGs printed
 
-  Optional: generate a Mermaid state diagram to inspect structure visually
-  before running MATLAB (Phase 3 — planned):
+  Recommended: export a PlantUML diagram to verify structure and actions
+  before running MATLAB:
+    sf_yaml_to_puml(yaml_path, output_path='chart.puml')
+  Open in VS Code (PlantUML extension, Alt+D) or paste at plantuml.com.
+  Shows topology + en:/du:/ex: action code. No MATLAB required.
+
+  Alternative (structure only, no actions):
     sf_yaml_to_mermaid(yaml_path)  →  stateDiagram-v2 string
-  Paste into a Mermaid renderer (GitHub, VS Code, mermaid.live) or
-  send the diagram to a multimodal LLM to check topology against the spec.
-  No MATLAB required.
+  Paste into GitHub, VS Code, or mermaid.live.
+
+  See §4.4 for full PlantUML workflow details.
         │
         ├── ERRORs present → fix and return to Step 4
         ├── WARNINGs present → fix or decide to suppress, return to Step 4
@@ -296,7 +302,53 @@ sf_yaml_to_matlab('my.yaml', 'out.m')
 # validation still runs internally; issues printed to stderr
 ```
 
-### 4.4 Inspect, compare, and extract
+### 4.4 PlantUML visual preview
+
+Before running MATLAB, export the YAML to a PlantUML diagram to verify the structure
+and action code visually. PlantUML shows `en:`/`du:`/`ex:` actions as state description
+lines, which Mermaid cannot do.
+
+**One-liner:**
+
+```python
+from slxgen import sf_yaml_to_puml
+sf_yaml_to_puml('my_chart.yaml', output_path='my_chart.puml')
+```
+
+**Via the gen script** — every `work/*/gen_*.py` script has a `PUML_ONLY` flag at the top:
+
+```python
+PUML_ONLY = True   # set to True to regenerate .puml without touching MATLAB
+```
+
+Setting it to `True` writes `generated/<chart>.puml` and exits. Set back to `False`
+to run the full pipeline.
+
+**Viewing the diagram** — any of these work without installing PlantUML locally:
+
+| Tool | How |
+| ---- | --- |
+| VS Code | Install the *PlantUML* extension; open the `.puml` file and press `Alt+D` |
+| GitHub | Push the `.puml` file; GitHub renders it inline if it's in a `.md` via a fenced block |
+| Browser | Paste the text at [plantuml.com/plantuml](https://www.plantuml.com/plantuml) |
+| LLM | Paste the text and ask "does this topology match the spec?" |
+
+**What to check in the diagram:**
+
+- All states present and nested correctly
+- Initial states (`[*] -->`) point to the right child
+- Sink/fault states have `-->  [*]`
+- Entry actions (`entry /`) match the output assignments in the spec
+- No obvious missing transitions
+
+**Mermaid alternative** — `sf_yaml_to_mermaid()` produces a `stateDiagram-v2` string
+that renders on GitHub and mermaid.live. It shows topology and transition labels but
+**does not include `en`/`du`/`ex` actions**. Use it for quick structure-only checks
+when you do not need to see action code.
+
+---
+
+### 4.5 Inspect, compare, and extract
 
 **Inspect an existing SLX model:**
 
@@ -356,8 +408,20 @@ most production models.
 (states + transitions, no actions), validate it, then ask the LLM to add actions
 in a second prompt. This prevents action logic from masking structural errors.
 
-**Use the screenshot as feedback.** After generation, open the PNG or paste it into
-the LLM conversation:
+**Use PlantUML as the fast feedback loop.** Before running MATLAB, export the YAML to
+PlantUML and paste it into the LLM conversation:
+
+```text
+"Here is the PlantUML diagram of the generated state machine.
+Does the topology match the requirements?
+Are all states reachable? Are the entry actions correct?"
+```
+
+This loop (edit YAML → export `.puml` → review with LLM) is much faster than
+running the full pipeline and catches structural issues before MATLAB is involved.
+
+**Use the Stateflow screenshot for final review.** After running the full pipeline,
+open the PNG and check the layout:
 
 ```text
 "Here is the generated Stateflow chart. Does the topology match the requirements?

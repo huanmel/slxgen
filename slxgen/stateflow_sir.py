@@ -523,6 +523,122 @@ def sf_yaml_to_mermaid(yaml_path: str | Path, default_size: list | None = None) 
 
 
 # ---------------------------------------------------------------------------
+# PlantUML @startuml state diagram backend
+# ---------------------------------------------------------------------------
+
+def _puml_label(t: SIRTransition) -> str:
+    """Build a PlantUML transition label: trigger [condition] / action."""
+    parts = []
+    if t.trigger:
+        parts.append(t.trigger)
+    if t.condition:
+        parts.append(f'[{t.condition}]')
+    if t.action:
+        parts.append('/ ' + t.action)
+    return ' '.join(parts)
+
+
+def sir_to_puml(sir: SIRModel) -> str:
+    """Convert a SIRModel to a PlantUML @startuml state diagram string.
+
+    Encodes en/du/ex as 'entry/do/exit' description lines so the diagram
+    shows all action code. Nested states use indented state blocks.
+    AND-decomposition states emit '--' region separators.
+    Multi-line code is collapsed to a single line using \\n.
+    """
+    lines = [f'@startuml {sir.name}', '']
+
+    children: dict[str | None, list[SIRState]] = defaultdict(list)
+    for s in sir.states:
+        children[s.parent].append(s)
+    for lst in children.values():
+        lst.sort(key=lambda s: (not s.initial, s.name))
+
+    child_ids: set[str] = set(children.keys()) - {None}
+
+    def emit(parent_id: str | None, indent: int) -> None:
+        pad = '  ' * indent
+        for s in children.get(parent_id, []):
+            if s.initial:
+                lines.append(f'{pad}[*] --> {s.name}')
+            if s.id in child_ids:
+                lines.append(f'{pad}state {s.name} {{')
+                if s.decomp == 'AND':
+                    and_children = children[s.id]
+                    for j, region in enumerate(and_children):
+                        if region.initial:
+                            lines.append(f'{pad}  [*] --> {region.name}')
+                        if region.id in child_ids:
+                            lines.append(f'{pad}  state {region.name} {{')
+                            emit(region.id, indent + 2)
+                            lines.append(f'{pad}  }}')
+                        else:
+                            lines.append(f'{pad}  state {region.name}')
+                        if j < len(and_children) - 1:
+                            lines.append(f'{pad}  --')
+                else:
+                    emit(s.id, indent + 1)
+                lines.append(f'{pad}}}')
+            else:
+                lines.append(f'{pad}state {s.name}')
+
+    emit(None, 0)
+
+    # Description lines: entry/do/exit actions, emitted flat after hierarchy
+    desc_lines = []
+    for s in sir.states:
+        if s.en:
+            code = s.en.replace('\n', '\\n')
+            desc_lines.append(f'{s.name} : en:\\n{code}\\n')
+        if s.du:
+            code = s.du.replace('\n', '\\n')
+            desc_lines.append(f'{s.name} : du:\\n{code}\\n')
+        if s.ex:
+            code = s.ex.replace('\n', '\\n')
+            desc_lines.append(f'{s.name} : ex:\\n{code}\\n')
+
+    if desc_lines:
+        lines.append('')
+        lines.extend(desc_lines)
+
+    # Sink/fault states: X --> [*]
+    sink_lines = [f'{s.name} --> [*]' for s in sir.states
+                  if s.role in ('sink', 'fault', 'error')]
+    if sink_lines:
+        lines.append('')
+        lines.extend(sink_lines)
+
+    # Transitions
+    lines.append('')
+    for t in sir.transitions:
+        src = t.source.rsplit('.', 1)[-1]
+        tgt = t.target.rsplit('.', 1)[-1]
+        label = _puml_label(t)
+        arrow = f' : {label}' if label else ''
+        lines.append(f'{src} --> {tgt}{arrow}')
+
+    lines += ['', '@enduml']
+    return '\n'.join(lines)
+
+
+def sf_yaml_to_puml(yaml_path: str | Path,
+                    output_path: str | Path | None = None,
+                    default_size: list | None = None) -> str:
+    """Load an sf.yaml file and return a PlantUML state diagram string.
+
+    If output_path is provided, also writes the result to disk.
+    """
+    import yaml as _yaml
+
+    chart_dict = _yaml.safe_load(Path(yaml_path).read_text(encoding='utf-8'))
+    sir = yaml_to_sir(chart_dict, default_size=default_size)
+    text = sir_to_puml(sir)
+    if output_path is not None:
+        Path(output_path).write_text(text, encoding='utf-8')
+    return text
+
+
+# ---------------------------------------------------------------------------
 
 def sf_yaml_to_sir_json(yaml_path: str | Path, output_path: str | Path | None = None,
                         indent: int = 2) -> str:
