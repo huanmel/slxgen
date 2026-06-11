@@ -589,13 +589,13 @@ def sir_to_puml(sir: SIRModel) -> str:
     for s in sir.states:
         if s.en:
             code = s.en.replace('\n', '\\n')
-            desc_lines.append(f'{s.name} : en:\\n{code}\\n')
+            desc_lines.append(f'{s.name} : entry / {code}')
         if s.du:
             code = s.du.replace('\n', '\\n')
-            desc_lines.append(f'{s.name} : du:\\n{code}\\n')
+            desc_lines.append(f'{s.name} : do / {code}')
         if s.ex:
             code = s.ex.replace('\n', '\\n')
-            desc_lines.append(f'{s.name} : ex:\\n{code}\\n')
+            desc_lines.append(f'{s.name} : exit / {code}')
 
     if desc_lines:
         lines.append('')

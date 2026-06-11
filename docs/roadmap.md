@@ -1,13 +1,15 @@
 # slxgen — Project Roadmap
 
-**Last updated:** May 2026- [slxgen — Project Roadmap](#slxgen--project-roadmap)
+**Last updated:** June 2026
 
 - [slxgen — Project Roadmap](#slxgen--project-roadmap)
   - [Current state](#current-state)
   - [Project layer architecture](#project-layer-architecture)
   - [Strategic direction](#strategic-direction)
   - [Work items](#work-items)
-    - [Priority 1 — Mermaid backend (Phase 3) \[~50–80 LOC\]](#priority-1--mermaid-backend-phase-3-5080-loc)
+    - [Priority 1 — Mermaid + PlantUML export (Phase 3) ✓ done](#priority-1--mermaid--plantuml-export-phase-3--done)
+    - [Priority 1b — PlantUML export: history junction](#priority-1b--plantuml-export-history-junction)
+    - [Priority 1c — PlantUML ↔ YAML roundtrip (import)](#priority-1c--plantuml--yaml-roundtrip-import)
     - [Priority 2 — Configurable validator](#priority-2--configurable-validator)
     - [Priority 3 — Extensible verification plugin system](#priority-3--extensible-verification-plugin-system)
     - [Priority 4 — YAML normalizer (Phase 4)](#priority-4--yaml-normalizer-phase-4)
@@ -24,7 +26,7 @@
 
 ## Current state
 
-Phases 1 and 2 of the SIR are complete. The live generation pipeline:
+Phases 1–3 of the SIR are complete. The live generation pipeline:
 
 ```text
 YAML  →  yaml_to_sir()  →  sir_validate()  →  sir_to_chart_dict()  →  stateflow_dict_to_matlab()
@@ -34,6 +36,11 @@ SIR validates structure (9 checks across state defaults, transition priorities,
 variable initialization, and transition action patterns), drives generation via
 `sir_to_chart_dict()`, and exports JSON for inspection. The MATLAB codegen and
 ELK layout engine are unchanged.
+
+**Diagram export (Phase 3 — done):** `sir_to_mermaid()` / `sf_yaml_to_mermaid()` and
+`sir_to_puml()` / `sf_yaml_to_puml()` both live in `stateflow_sir.py`. PlantUML is
+the recommended visual preview format (encodes `en`/`du`/`ex` actions); Mermaid is the
+lightweight structure-only alternative. See `docs/workflow.md §4.4`.
 
 ---
 
@@ -49,7 +56,7 @@ All work is assigned to one of these layers. Keeps scope clear.
 | **Config / filter** | (planned) `ValidationConfig` + plugin check sets | `stateflow_sir.py`, new `stateflow_checks.py` |
 | **Compiler / SF generator** | `stateflow_dict_to_matlab()` — frozen | `stateflow.py` |
 | **Layout engine** | ELK + post-ELK placement | `elk_layout.py`, `stateflow.py` |
-| **Alt backends** | (planned) Mermaid/PlantUML, formal tools | new |
+| **Alt backends** | Mermaid + PlantUML export ✓; PlantUML import (planned) | `stateflow_sir.py`, new `puml_import.py` |
 
 ---
 
@@ -61,7 +68,9 @@ what is allowed for specific purposes (formal verification, safety review).
 
 ```text
           ┌─── Stateflow generator    (done)
-YAML ─► SIR ─── Mermaid / PlantUML   (next)
+          ├─── Mermaid export         (done)
+YAML ─► SIR ─── PlantUML export      (done)
+          ├─── PlantUML import ◄──── .puml prototype (planned)
           ├─── YAML normalizer        (planned)
           └─── Formal verification    (future, gated by profile)
 ```
@@ -73,18 +82,76 @@ formal model separately from the production Stateflow model.
 
 ## Work items
 
-### Priority 1 — Mermaid backend (Phase 3) [~50–80 LOC]
+### Priority 1 — Mermaid + PlantUML export (Phase 3) ✓ done
 
-Generate a Mermaid `stateDiagram-v2` diagram directly from `SIRModel`.
+Both diagram backends are implemented in `stateflow_sir.py`:
 
-- Proves multi-backend with zero regression risk to MATLAB path
-- GitHub renders Mermaid natively — no infrastructure needed
-- Entry point: `sf_yaml_to_mermaid(yaml_path) -> str` in `stateflow_sir.py`
-- Nested subchart states → `state X { }` blocks
-- Fault-role states → `<<fault>>` comment annotation
+- `sir_to_mermaid()` / `sf_yaml_to_mermaid()` — structure + transition labels; renders on GitHub and mermaid.live
+- `sir_to_puml()` / `sf_yaml_to_puml()` — full fidelity: state hierarchy, transitions, and `en`/`du`/`ex` actions as `entry/do/exit` description lines
 
-PlantUML can follow if richer diagram output is needed (better nested state support,
-notes, colors). Architecture is the same; only the emit function differs.
+Both are exported from `slxgen/__init__.py`. Workflow documented in `docs/workflow.md §4.4`.
+
+**Limitations remaining** — see 1b and 1c below.
+
+### Priority 1b — PlantUML export: history junction
+
+`SIRState.history = True` is silently ignored by `sir_to_puml()`. PlantUML expresses
+history as a `[H]` pseudo-state inside the composite state block:
+
+```plantuml
+state DMAN {
+  [H] --> D_FACE   ' on re-entry resume last child; first entry goes to D_FACE
+  state D_FACE
+  state D_FOOT
+}
+```
+
+**Fix** (~5 LOC in `sir_to_puml`): inside `emit()`, when `s.history` is True, emit
+`[H] --> <default_child_name>` instead of (or in addition to) `[*] --> <name>`.
+
+The `[H]` pseudo-state replaces the `[*]` initial arrow for states with history —
+on first entry PlantUML uses `[H]`'s target; on re-entry it resumes the last active
+child.
+
+### Priority 1c — PlantUML ↔ YAML roundtrip (import)
+
+**Motivation**: PlantUML is a natural prototyping format for state machines — easy to
+write by hand or with an LLM, renders immediately in VS Code (PlantUML extension),
+and supports `entry`/`exit`/`do` action annotations. The intended authoring loop is:
+
+```text
+sketch .puml  →  review diagram  →  puml_file_to_yaml()  →  validate  →  run_pipeline()
+                      ↑                                            |
+                      └──────── edit YAML + sf_yaml_to_puml() ────┘
+```
+
+**What to implement** (`slxgen/puml_import.py` — new file):
+
+- `puml_to_sir(text: str) -> SIRModel` — parse PlantUML state diagram text
+- `puml_file_to_yaml(puml_path, yaml_path=None) -> str` — write sf.yaml from `.puml`
+
+**PlantUML subset to parse:**
+
+| Construct | Maps to |
+| --------- | ------- |
+| `@startuml Name` | `SIRModel.name` |
+| `[*] --> X` | `X.initial = True` |
+| `X --> [*]` | `X.role = 'sink'` |
+| `[H] --> X` inside state | parent `history = True`; X `initial = True` |
+| `state X { }` | composite state with children |
+| `state X` (leaf) | leaf state |
+| `--` inside state block | parent `decomp = 'AND'` |
+| `X : entry / code` | `X.en` |
+| `X : do / code` | `X.du` (convention extension) |
+| `X : exit / code` | `X.ex` |
+| `src --> dst` | transition (no label) |
+| `src --> dst : trigger [cond] / action` | transition with label |
+
+Variables (inputs/outputs/locals) have no PlantUML equivalent — the generated YAML
+will have empty variable sections with a comment scaffold for the user to fill in.
+
+**Workflow documentation update** (`docs/workflow.md`): add a "roundtrip" subsection
+to §4.4 showing the full edit loop and the `PUML_ONLY` flag pattern.
 
 ### Priority 2 — Configurable validator
 

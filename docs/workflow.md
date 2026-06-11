@@ -8,6 +8,7 @@
   - [1. Inputs before you start](#1-inputs-before-you-start)
     - [1.1 For human authors](#11-for-human-authors)
     - [1.2 For LLM-assisted authoring](#12-for-llm-assisted-authoring)
+    - [1.3 PlantUML-first prototyping](#13-plantuml-first-prototyping)
   - [2. The edit-validate loop](#2-the-edit-validate-loop)
   - [3. Validation output — what each message means](#3-validation-output--what-each-message-means)
   - [4. Running the tools](#4-running-the-tools)
@@ -131,6 +132,125 @@ transitions:
     condition: "[signal_in]"
     action: "output = 2;"   # runs before target en:
 ```
+
+### 1.3 PlantUML-first prototyping
+
+When the FSM structure is not yet settled, start with a PlantUML sketch instead
+of YAML. PlantUML renders instantly in VS Code, requires no field names or variable
+types, and is easy to share with stakeholders for review. Once the topology is
+stable, convert to YAML and fill in the details.
+
+**Why this works better than going straight to YAML:**
+
+- Topology errors (missing states, wrong hierarchy, unreachable nodes) are cheap
+  to spot visually and expensive to find after YAML + MATLAB generation.
+- A diagram can be reviewed by non-engineers (system architects, safety reviewers)
+  who don't read YAML.
+- The sketch doubles as documentation — commit the `.puml` alongside the YAML.
+
+**The prototyping loop:**
+
+```text
+1. Sketch .puml in VS Code
+        │  Alt+D to preview
+        ▼
+2. Does topology match the spec?
+        │  NO → edit .puml, go to 1
+        ▼  YES
+3. Convert to YAML scaffold
+        │  (manually or LLM-assisted — see below)
+        │  puml_file_to_yaml() planned — see roadmap §1c
+        ▼
+4. Add variables: inputs / outputs / locals + types + initial_value
+        ▼
+5. Add actions: en: / du: / ex: per state
+        ▼
+6. sf_yaml_to_puml() → review updated diagram
+        │  action code now visible as entry/do/exit lines
+        ▼
+7. run_pipeline()  →  Stateflow .slx
+```
+
+**Minimal PlantUML for state machines:**
+
+```plantuml
+@startuml MyChart
+
+[*] --> IDLE
+
+state IDLE
+state CONNECTING
+state FAULT
+state READY {
+  [*] --> WAITING
+  state WAITING
+  state ACTIVE
+  WAITING --> ACTIVE : [data_ok]
+}
+
+IDLE : entry / status = IDLE_e;
+CONNECTING : entry / status = CONNECTING_e;
+FAULT : entry / status = FAULT_e;
+
+IDLE --> CONNECTING : [start_cmd]
+CONNECTING --> READY : [link_ok]
+CONNECTING --> FAULT : [timeout]
+READY --> IDLE : [stop_cmd]
+FAULT --> IDLE : [reset_cmd]
+
+@enduml
+```
+
+**Key PlantUML constructs for slxgen:**
+
+| PlantUML line | YAML equivalent |
+| ------------- | --------------- |
+| `[*] --> X` at root | X is the default (initial) state |
+| `[*] --> X` inside `state P {}` | X is the default child of P |
+| `X --> [*]` | `role: sink` on X |
+| `state P { state C }` | C is a child of P in `states:` hierarchy |
+| `--` inside a state block | parent has `type: AND` |
+| `X : entry / code` | `en: code` on X |
+| `X : do / code` | `du: code` on X |
+| `X : exit / code` | `ex: code` on X |
+| `A --> B : [cond]` | transition `from: A, to: B, condition: cond` |
+| `A --> B : trigger [cond] / action` | transition with `trigger:`, `condition:`, `action:` |
+
+**Converting to YAML manually (or via LLM):**
+
+Variables (inputs/outputs/locals) have no PlantUML equivalent — add them by hand
+after conversion. Everything else maps directly using the table above.
+
+To ask an LLM to convert, provide:
+
+```text
+Convert this PlantUML state diagram to slxgen sf.yaml format.
+Use the YAML schema from docs/workflow.md §1.2.
+Leave inputs/outputs/locals empty — I will fill them in.
+[paste .puml text]
+```
+
+**Note:** `puml_file_to_yaml()` (automatic import) is planned in roadmap §1c.
+Until it is implemented, use the manual or LLM-assisted path above.
+
+**Worked example** — `example/model_gen/` contains a complete walk-through of this
+workflow using a fan mode control FSM:
+
+| File | Role |
+| ---- | ---- |
+| `fan_ctrl_draft.puml` | Hand-drawn prototype — the starting specification; open in VS Code (`Alt+D`) |
+| `fan_ctrl_sf.yaml` | Full specification derived from the draft: variables + `en:` actions added |
+| `gen_fan_ctrl.py` | Gen script; `PUML_ONLY=True` → regenerates `fan_ctrl_gen.puml` from the YAML for comparison |
+| `fan_ctrl_gen.puml` | Generated diagram (created by running the gen script) |
+
+**Key step**: with `PUML_ONLY=True`, open `fan_ctrl_draft.puml` and `fan_ctrl_gen.puml`
+side-by-side in VS Code. Check that every state, transition, and entry action from
+the draft appears in the generated diagram — this confirms the YAML correctly captures
+the original specification before running the full pipeline.
+
+What was added between draft and YAML:
+history junction on `MANUAL`, subchart flag, entry action code per state, and typed
+variable declarations (inputs / outputs / locals).
 
 ---
 

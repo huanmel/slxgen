@@ -1,0 +1,71 @@
+@startuml FanCtrl
+
+' Fan Mode Control — initial draft specification
+'
+' Written by hand to agree on topology before creating the YAML.
+' Annotated with en: action blocks (custom notation; maps to en: in YAML).
+' Compare with fan_ctrl_gen.puml (generated from fan_ctrl_sf.yaml) to
+' verify the YAML correctly captures this intent.
+'
+' Hierarchy:
+'   STANDBY                  — HVAC off; neutral fan position
+'   ACTIVE (compound)        — HVAC on
+'     A_ENTRY (immediate)    — routes to DEFROST or NORMAL on ACTIVE entry
+'     DEFROST                — defrost locked to windscreen; exits when level drops
+'     NORMAL (compound)      — normal mode control
+'       N_ENTRY (immediate)  — routes to AUTO or MANUAL (uses hist_auto)
+'       AUTO                 — TCU selects direction
+'       MANUAL (history)     — user-selected direction
+'         INIT (default)     — wait for first button press
+'         FACE / FOOT / WIND
+
+[*] --> STANDBY
+
+state STANDBY
+state ACTIVE {
+  [*] --> A_ENTRY
+  state A_ENTRY
+  state DEFROST
+  state NORMAL {
+    [*] --> N_ENTRY
+    state N_ENTRY
+    state AUTO
+    state MANUAL {
+      [*] --> INIT
+      state INIT
+      state FACE
+      state FOOT
+      state WIND
+    }
+  }
+}
+
+STANDBY : en:\nfan_mode=FanMode_e.STANDBY;\nfan_dir=FanDir_e.NEUTRAL;
+AUTO    : en:\nfan_mode=FanMode_e.AUTO;\nfan_dir=FanDir_e.AUTO;\nhist_auto=true;
+MANUAL  : en:\nfan_mode=FanMode_e.MANUAL;\nhist_auto=false;
+FACE    : en:\nfan_dir=FanDir_e.FACE;
+FOOT    : en:\nfan_dir=FanDir_e.FOOT;
+WIND    : en:\nfan_dir=FanDir_e.WINDSCREEN;
+DEFROST : en:\nfan_mode=FanMode_e.DEFROST;\nfan_dir=FanDir_e.WINDSCREEN;
+
+STANDBY  --> ACTIVE  : after(debTout,tick) [hvac_on]
+ACTIVE   --> STANDBY : after(debTout,tick) [~hvac_on]
+A_ENTRY  --> DEFROST : [defr_active]
+A_ENTRY  --> NORMAL  : [~defr_active]
+NORMAL   --> DEFROST : after(debTout,tick) [defr_active]
+DEFROST  --> NORMAL  : after(debTout,tick) [~defr_active]
+N_ENTRY  --> AUTO    : [mode2auto || (hist_auto && ~mode2manual)]
+N_ENTRY  --> MANUAL  : [mode2manual || ~hist_auto]
+AUTO     --> MANUAL  : after(debTout,tick) [mode2manual]
+MANUAL   --> AUTO    : after(debTout,tick) [mode2auto]
+INIT     --> FACE    : after(debTout,tick) [face_press]
+INIT     --> FOOT    : after(debTout,tick) [foot_press]
+INIT     --> WIND    : after(debTout,tick) [wind_press]
+FACE     --> FOOT    : after(debTout,tick) [foot_press]
+FACE     --> WIND    : after(debTout,tick) [wind_press]
+FOOT     --> FACE    : after(debTout,tick) [face_press]
+FOOT     --> WIND    : after(debTout,tick) [wind_press]
+WIND     --> FACE    : after(debTout,tick) [face_press]
+WIND     --> FOOT    : after(debTout,tick) [foot_press]
+
+@enduml
