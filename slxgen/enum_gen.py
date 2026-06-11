@@ -215,7 +215,9 @@ def enum_sldd_script(enums: dict[str, dict], sldd_name: str) -> str:
         "end",
         '',
         f'importEnumTypes(dict, {{{type_list}}});',
-        "disp(['Enum types imported to: ' sldd_path]);",
+        'saveChanges(dict);',
+        'clear dict;',
+        "disp(['Saved: ' sldd_path]);",
     ]
 
     return '\n'.join(lines)
