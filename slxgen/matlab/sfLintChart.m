@@ -121,8 +121,10 @@ for ci = 1:numel(containers)
             t = allTrans(ti);
             if isempty(t.Destination), continue; end
             if strcmp(t.Destination.Path, cFull)
-                % (a) direct child targeted
-                reachableNames{end+1} = t.Destination.Name; %#ok<AGROW>
+                % (a) direct child targeted — skip junctions (no Name property)
+                if ~isa(t.Destination, 'Stateflow.Junction')
+                    reachableNames{end+1} = t.Destination.Name; %#ok<AGROW>
+                end
             elseif strncmp(t.Destination.Path, deepPrefix, deepPLen)
                 % (b) deep substate: extract the direct-child name from the path
                 remainder = t.Destination.Path(deepPLen+1:end);
@@ -151,7 +153,10 @@ for ci = 1:numel(containers)
     if ~isempty(innerTrans)
         for si = 1:numel(childStates)
             srcState = childStates(si);
-            fromMask = arrayfun(@(t) strcmp(t.Source.Name, srcState.Name) && ...
+            % Skip transitions involving junctions — they have no Name property.
+            fromMask = arrayfun(@(t) ~isa(t.Source, 'Stateflow.Junction') && ...
+                                     ~isa(t.Destination, 'Stateflow.Junction') && ...
+                                     strcmp(t.Source.Name, srcState.Name) && ...
                                      ~strcmp(t.Destination.Name, t.Source.Name), innerTrans);
             fromSrc  = innerTrans(fromMask);
             if numel(fromSrc) >= 2
@@ -181,9 +186,13 @@ end
 for ti = 1:numel(allTrans)
     t = allTrans(ti);
     if ~isempty(t.Source) && isempty(t.Destination)
+        if isa(t.Source, 'Stateflow.Junction')
+            srcLabel = '[connective junction]';
+        else
+            srcLabel = t.Source.Name;
+        end
         issues = [issues; mkIssue(t, 'MissingDestination', ...
-            sprintf('Transition from "%s" has no destination.', ...
-                    t.Source.Name))]; %#ok<AGROW>
+            sprintf('Transition from "%s" has no destination.', srcLabel))]; %#ok<AGROW>
     end
 end
 
