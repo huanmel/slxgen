@@ -41,6 +41,8 @@ class SIRState:
     du: str | None
     ex: str | None
     junction: bool = False  # True → connective junction (Stateflow.Junction, not State)
+    desc: str | None = None    # freeform description → s.Description in MATLAB
+    req: list[str] | None = None  # requirement IDs, e.g. ['REQ-001', 'REQ-002']
 
 
 @dataclass
@@ -53,6 +55,8 @@ class SIRTransition:
     trigger: str | None  # Stateflow event trigger, distinct from condition
     action: str | None
     action_type: str     # 'CONDITION' | 'TRANSITION' | 'NONE'
+    desc: str | None = None    # freeform description → script comment in MATLAB
+    req: list[str] | None = None  # requirement IDs
 
 
 @dataclass
@@ -61,6 +65,38 @@ class SIRModel:
     states: list[SIRState]
     transitions: list[SIRTransition]
     variables: list[SIRVariable]
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _parse_req(raw) -> list[str] | None:
+    """Normalise a YAML req: value to list[str] or None.
+
+    Accepts a single string ('REQ-001'), a list (['REQ-001', 'REQ-002']),
+    or None/absent.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, list):
+        result = [str(r) for r in raw if r is not None]
+        return result or None
+    return [str(raw)]
+
+
+def format_description(desc: str | None, req: 'list[str] | None') -> str | None:
+    """Combine req IDs and free-text description into a single string.
+
+    Format: ``[REQ-001][REQ-002] description text``
+    Returns None when both inputs are absent.
+    """
+    parts: list[str] = []
+    if req:
+        parts.append(''.join(f'[{r}]' for r in req))
+    if desc:
+        parts.append(desc)
+    return ' '.join(parts) if parts else None
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +149,8 @@ def yaml_to_sir(chart_dict: dict, default_size: list | None = None) -> SIRModel:
                 du=state_data.get('du'),
                 ex=state_data.get('ex'),
                 junction=bool(state_data.get('junction', False)),
+                desc=state_data.get('desc') or None,
+                req=_parse_req(state_data.get('req')),
             ))
             if 'states' in state_data:
                 _walk(state_data['states'], sid)
@@ -147,6 +185,8 @@ def yaml_to_sir(chart_dict: dict, default_size: list | None = None) -> SIRModel:
             trigger=t.get('trigger') or None,
             action=action,
             action_type=action_type,
+            desc=t.get('desc') or None,
+            req=_parse_req(t.get('req')),
         ))
 
     return SIRModel(name=name, states=states, transitions=transitions, variables=variables)
@@ -402,6 +442,10 @@ def sir_to_chart_dict(sir: SIRModel) -> dict:
             node['du'] = s.du
         if s.ex is not None:
             node['ex'] = s.ex
+        if s.desc is not None:
+            node['desc'] = s.desc
+        if s.req is not None:
+            node['req'] = s.req
 
         nodes_data[s.id] = node
 
@@ -427,6 +471,10 @@ def sir_to_chart_dict(sir: SIRModel) -> dict:
             # Re-add '/' sigil for transition actions so _rebuild_transition_label
             # can distinguish them from condition actions.
             entry['action'] = f'/{t.action}' if t.action_type == 'TRANSITION' else t.action
+        if t.desc is not None:
+            entry['desc'] = t.desc
+        if t.req is not None:
+            entry['req'] = t.req
         transitions.append(entry)
 
     cd: dict = {'name': sir.name}

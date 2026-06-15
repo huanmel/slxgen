@@ -14,7 +14,7 @@ except ImportError:
     _ELK_AVAILABLE = False
     _DEFAULT_TRANS_OFFSET = 20
 
-from slxgen.stateflow_sir import yaml_to_sir, sir_validate, sir_to_chart_dict
+from slxgen.stateflow_sir import yaml_to_sir, sir_validate, sir_to_chart_dict, format_description as _format_description
 
 
 # ----------------------------------------------------------------------
@@ -871,7 +871,7 @@ def _sf_states_to_matlab_lines(
 
         _is_junction = bool(state_body.get('junction'))
         actions = {k: v for k, v in state_body.items()
-                   if k not in ('states', 'default', 'type', 'subchart', 'history', 'junction') and isinstance(v, str)}
+                   if k not in ('states', 'default', 'type', 'subchart', 'history', 'junction', 'desc', 'req', 'role') and isinstance(v, str)}
 
         if _is_junction:
             lines.append(f"{var} = Stateflow.Junction({parent_var});")
@@ -890,6 +890,9 @@ def _sf_states_to_matlab_lines(
             lines.append(f"{var} = Stateflow.State({parent_var});")
             lines.append(f"{var}.Name = '{_escape_matlab_str(state_name)}';")
             lines.append(f"{var}.LabelString = {_matlab_str_literal(label)};")
+            _desc = _format_description(state_body.get('desc'), state_body.get('req'))
+            if _desc:
+                lines.append(f"{var}.Description = {_matlab_str_literal(_desc)};")
             if full_path in positions:
                 x, y, w, h = positions[full_path]
                 # Stateflow.State.Position is always chart-absolute for non-subchart states.
@@ -1216,6 +1219,9 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: 'str | None' = None,
                 sx, sy, sw, sh = positions[src_path]
                 mid_x = (sx + sw - lca_x + jbus['spine_x'] - lca_x) // 2
                 mid_y = sy + sh // 2 - lca_y
+                _tr_desc = _format_description(tr.get('desc'), tr.get('req'))
+                if _tr_desc:
+                    lines.append(f"% {_tr_desc}")
                 lines.append(f"{tv} = Stateflow.Transition({tr_parent_var});")
                 if src_var:
                     lines.append(f"{tv}.Source = {src_var};")
@@ -1239,6 +1245,9 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: 'str | None' = None,
                 continue  # skip normal emit for this transition
 
         # --- Normal emit
+        _tr_desc = _format_description(tr.get('desc'), tr.get('req'))
+        if _tr_desc:
+            lines.append(f"% {_tr_desc}")
         lines.append(f"{tv} = Stateflow.Transition({tr_parent_var});")
         if src_var:
             lines.append(f"{tv}.Source = {src_var};")

@@ -56,26 +56,38 @@ enums:
 states:
   STANDBY:
     default: true
+    desc: Fan system idle. All outputs de-energised; unit waits for fan_on activation.
+    req: REQ-FAN-001
     en: |-
       fan_mode=FanMode_e.STANDBY;
       fan_spd=FanSpd_e.OFF;
   ACTIVE:
+    desc: Fan system running. Speed and mode driven by sub-state selection.
+    req: [REQ-FAN-002, REQ-FAN-003]
     states:
       A_ENTRY:
         default: true
       BOOST:
+        desc: Forced-HIGH override. Remains active as long as boost_req is asserted.
+        req: REQ-FAN-010
         en: |-
           fan_mode=FanMode_e.BOOST;
           fan_spd=FanSpd_e.HIGH;
       NORMAL:
+        desc: Normal closed-loop speed control. Routes to AUTO or MANUAL sub-mode.
+        req: REQ-FAN-011
         states:
           N_ENTRY:
             default: true
           AUTO:
+            desc: Controller-managed speed selection.
+            req: REQ-FAN-020
             en: |-
               fan_mode=FanMode_e.AUTO;
               hist_auto=true;
           MANUAL:
+            desc: User-selected speed level. History junction restores last active level on re-entry.
+            req: REQ-FAN-021
             history: true
             subchart: true
             en: |-
@@ -94,8 +106,20 @@ states:
 transitions:
 
   # STANDBY ↔ ACTIVE
-  - {from: STANDBY,                  to: ACTIVE,               trigger: "after(debTout,tick)", condition: "fan_on",    order: '1'}
-  - {from: ACTIVE,                   to: STANDBY,              trigger: "after(debTout,tick)", condition: "~fan_on",   order: '1'}
+  - from: STANDBY
+    to: ACTIVE
+    trigger: "after(debTout,tick)"
+    condition: "fan_on"
+    order: '1'
+    req: REQ-FAN-030
+    desc: Fan activation after debounce. Enters ACTIVE and routes immediately via A_ENTRY.
+  - from: ACTIVE
+    to: STANDBY
+    trigger: "after(debTout,tick)"
+    condition: "~fan_on"
+    order: '1'
+    req: REQ-FAN-031
+    desc: Fan shutdown. fan_on de-asserted; returns to idle after debounce.
 
   # A_ENTRY: immediate routing (no trigger)
   - {from: "ACTIVE.A_ENTRY",         to: "ACTIVE.BOOST",       condition: "boost_req",         order: '1'}
