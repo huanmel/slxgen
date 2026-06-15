@@ -40,6 +40,7 @@ class SIRState:
     en: str | None
     du: str | None
     ex: str | None
+    junction: bool = False  # True → connective junction (Stateflow.Junction, not State)
 
 
 @dataclass
@@ -111,6 +112,7 @@ def yaml_to_sir(chart_dict: dict, default_size: list | None = None) -> SIRModel:
                 en=state_data.get('en'),
                 du=state_data.get('du'),
                 ex=state_data.get('ex'),
+                junction=bool(state_data.get('junction', False)),
             ))
             if 'states' in state_data:
                 _walk(state_data['states'], sid)
@@ -245,6 +247,14 @@ def sir_validate(sir: SIRModel) -> list[str]:
             issues.append(
                 f"WARNING: state '{s.id}' has history=true but has no children "
                 f"— history junction has no effect on a leaf state"
+            )
+
+    # --- Junction checks ---
+    for s in sir.states:
+        if s.junction and (s.en or s.du or s.ex):
+            issues.append(
+                f"WARNING: junction '{s.id}' has en/du/ex actions — "
+                f"junctions cannot execute actions; these fields will be ignored"
             )
 
     # --- AND + subchart combination check ---
@@ -382,6 +392,8 @@ def sir_to_chart_dict(sir: SIRModel) -> dict:
             node['subchart'] = True
         if s.history:
             node['history'] = True
+        if s.junction:
+            node['junction'] = True
         if s.role is not None:
             node['role'] = s.role
         if s.en is not None:
@@ -561,7 +573,9 @@ def sir_to_puml(sir: SIRModel) -> str:
         for s in children.get(parent_id, []):
             if s.initial:
                 lines.append(f'{pad}[*] --> {s.name}')
-            if s.id in child_ids:
+            if s.junction:
+                lines.append(f'{pad}state {s.name} <<choice>>')
+            elif s.id in child_ids:
                 lines.append(f'{pad}state {s.name} {{')
                 if s.decomp == 'AND':
                     and_children = children[s.id]
@@ -587,6 +601,8 @@ def sir_to_puml(sir: SIRModel) -> str:
     # Description lines: entry/do/exit actions, emitted flat after hierarchy
     desc_lines = []
     for s in sir.states:
+        if s.junction:
+            continue
         if s.en:
             code = s.en.replace('\n', '\\n')
             desc_lines.append(f'{s.name} : entry / {code}')

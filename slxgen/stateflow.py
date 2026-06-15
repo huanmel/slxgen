@@ -578,6 +578,8 @@ def _compute_auto_sinks(states_dict: Dict, transitions: list,
 def _sf_state_size(state_body: Dict, transitions=None, path_prefix: str = '',
                    adaptive_leaf_width: bool = False, name: str = '') -> tuple:
     """Return (width, height) required to render this state and all its children."""
+    if state_body.get('junction'):
+        return (20, 20)
     children = state_body.get('states', {})
     if not children:
         w = _sf_leaf_width(state_body, name) if adaptive_leaf_width else _SF_LEAF_W
@@ -867,31 +869,45 @@ def _sf_states_to_matlab_lines(
         full_path = f'{path_prefix}.{state_name}' if path_prefix else state_name
         path_to_var[full_path] = var
 
+        _is_junction = bool(state_body.get('junction'))
         actions = {k: v for k, v in state_body.items()
-                   if k not in ('states', 'default', 'type', 'subchart', 'history') and isinstance(v, str)}
-        label = _rebuild_state_label(state_name, actions)
+                   if k not in ('states', 'default', 'type', 'subchart', 'history', 'junction') and isinstance(v, str)}
 
-        lines.append(f"{var} = Stateflow.State({parent_var});")
-        lines.append(f"{var}.Name = '{_escape_matlab_str(state_name)}';")
-        lines.append(f"{var}.LabelString = {_matlab_str_literal(label)};")
-        if full_path in positions:
-            x, y, w, h = positions[full_path]
-            # Stateflow.State.Position is always chart-absolute for non-subchart states.
-            # Only states that are direct children of a subchart use subchart-relative coords.
-            # All other states (chart-level AND children of non-subchart compounds) must use
-            # chart-absolute coords so Stateflow places them correctly in the visual hierarchy.
-            if _subchart_path and _subchart_path in positions:
-                px, py = positions[_subchart_path][0], positions[_subchart_path][1]
-            else:
-                px, py = 0, 0
-            lines.append(f"{var}.Position = [{x - px} {y - py} {w} {h}];")
+        if _is_junction:
+            lines.append(f"{var} = Stateflow.Junction({parent_var});")
+            if full_path in positions:
+                x, y, w, h = positions[full_path]
+                if _subchart_path and _subchart_path in positions:
+                    px, py = positions[_subchart_path][0], positions[_subchart_path][1]
+                else:
+                    px, py = 0, 0
+                cx = (x - px) + w // 2
+                cy = (y - py) + h // 2
+                lines.append(f"{var}.Position.Center = [{cx} {cy}];")
+                lines.append(f"{var}.Position.Radius = 10;")
+        else:
+            label = _rebuild_state_label(state_name, actions)
+            lines.append(f"{var} = Stateflow.State({parent_var});")
+            lines.append(f"{var}.Name = '{_escape_matlab_str(state_name)}';")
+            lines.append(f"{var}.LabelString = {_matlab_str_literal(label)};")
+            if full_path in positions:
+                x, y, w, h = positions[full_path]
+                # Stateflow.State.Position is always chart-absolute for non-subchart states.
+                # Only states that are direct children of a subchart use subchart-relative coords.
+                # All other states (chart-level AND children of non-subchart compounds) must use
+                # chart-absolute coords so Stateflow places them correctly in the visual hierarchy.
+                if _subchart_path and _subchart_path in positions:
+                    px, py = positions[_subchart_path][0], positions[_subchart_path][1]
+                else:
+                    px, py = 0, 0
+                lines.append(f"{var}.Position = [{x - px} {y - py} {w} {h}];")
 
-        if state_body.get('subchart'):
-            lines.append(f"{var}.IsSubchart = true;")
-            lines.append(f"{var}.ContentPreviewEnabled = false;")
+            if state_body.get('subchart'):
+                lines.append(f"{var}.IsSubchart = true;")
+                lines.append(f"{var}.ContentPreviewEnabled = false;")
 
-        if state_body.get('type') == 'AND':
-            lines.append(f"{var}.Decomposition = 'PARALLEL_AND';")
+            if state_body.get('type') == 'AND':
+                lines.append(f"{var}.Decomposition = 'PARALLEL_AND';")
 
         if state_name == default_child_name:
             dst_abs = positions.get(full_path)
@@ -905,7 +921,7 @@ def _sf_states_to_matlab_lines(
                                         dst_pos=dst_coord)
 
         children = state_body.get('states', {})
-        if children:
+        if children and not _is_junction:
             if state_body.get('history'):
                 # History junction floats freely inside the state — no transitions connect to it.
                 # Stateflow's engine uses its presence to restore the last active substate on re-entry.

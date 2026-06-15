@@ -1,0 +1,39 @@
+name: JunctionTest
+
+states:
+  IDLE:
+    default: true
+  ACTIVE:
+    states:
+      j_entry:
+        junction: true
+        default: true
+      NORMAL: {}
+      BOOST: {}
+      FAULT:
+        role: sink
+
+transitions:
+  - from: IDLE
+    to: ACTIVE
+    condition: start
+    order: 1
+  - from: ACTIVE.j_entry
+    to: ACTIVE.FAULT
+    condition: fault_active
+    order: 1
+  - from: ACTIVE.j_entry
+    to: ACTIVE.BOOST
+    condition: boost_req
+    order: 2
+  - from: ACTIVE.j_entry
+    to: ACTIVE.NORMAL
+    order: 3
+  - from: ACTIVE.NORMAL
+    to: ACTIVE.j_entry
+    condition: mode_change
+    order: 1
+  - from: ACTIVE.BOOST
+    to: ACTIVE.j_entry
+    condition: mode_change
+    order: 1
