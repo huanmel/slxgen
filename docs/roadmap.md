@@ -16,6 +16,7 @@
     - [Priority 5 — Layout linter + layout engine improvements](#priority-5--layout-linter--layout-engine-improvements)
     - [Priority 5b — Simulink model linter](#priority-5b--simulink-model-linter)
     - [Priority 5c — Wrap generated .m scripts as MATLAB functions](#priority-5c--wrap-generated-m-scripts-as-matlab-functions)
+    - [Priority 5d — Pure-Python layout engine (remove Node.js dependency)](#priority-5d--pure-python-layout-engine-remove-nodejs-dependency)
     - [Priority 6 — YAML schema gaps (as needed)](#priority-6--yaml-schema-gaps-as-needed)
     - [Priority 7 — Predicate/timer extraction (Phase 5)](#priority-7--predicatetimer-extraction-phase-5)
     - [Priority 8 — Formal verification backend (long-term)](#priority-8--formal-verification-backend-long-term)
@@ -394,6 +395,45 @@ Implementation:
 - The `export_charts` helper call inside the script stays unchanged.
 
 Risk: low — the generated body is self-contained; only the outer wrapper changes.
+
+### Priority 5d — Pure-Python layout engine (remove Node.js dependency)
+
+**Motivation:** ELK (Eclipse Layout Kernel) is invoked via `elkjs` (Node.js).
+This means every slxgen installation requires a Node.js runtime alongside Python,
+which is a friction point in corporate environments, CI images, and embedded
+toolchains.  A pure-Python alternative would make `pip install slxgen` sufficient.
+
+**The hard part is compound-state layout.** ELK's compound-node model handles
+nested states (states inside states) natively.  Most pure-Python graph libraries
+treat nodes as flat — compound support has to be layered on top.  Roughly 30–40 %
+of `elk_layout.py` is slxgen-specific post-processing (subchart origin correction,
+AND-decomposition, sink placement, label-stagger) that stays regardless of engine.
+
+**Candidate libraries:**
+
+| Library | Type | Compound support | Notes |
+| ------- | ---- | ---------------- | ----- |
+| [grandalf](https://github.com/bdcht/grandalf) | Pure Python | Partial — recursive calls possible | Sugiyama algorithm; lightest dep; most realistic for compound layout |
+| [fast-sugiyama](https://github.com/austinorr/fast-sugiyama) | Pure Python | No — flat only | Fast Sugiyama; needs compound wrapper |
+| [python-igraph](https://python.igraph.org/) | C extension (wheels) | No — flat only | Excellent graph analysis + Sugiyama/RT layouts; not pure Python |
+
+**Recommended evaluation order:**
+
+1. **grandalf** — evaluate whether recursive bottom-up calls can replicate ELK's
+   compound layout for slxgen's use case (OR states, AND regions, subcharts).
+   Prototype: replace `elk_layout_bottomup()` with a grandalf-backed equivalent
+   that passes the existing layout acceptance tests.
+2. **fast-sugiyama** — if grandalf is too slow for large charts, evaluate as a
+   performance alternative with a compound wrapper.
+3. **igraph** — consider if only flat-layout quality is the concern (not the
+   Node.js dependency), since igraph's Sugiyama is the most polished.
+
+**Acceptance criterion:** all existing generated `.m` files in `example/model_gen/generated/`
+have visually equivalent layouts (no overlapping states, similar spacing).
+
+**Risk:** medium.  The feature is self-contained (`elk_layout.py` is the only file
+that would change) but the compound-state layout logic is the most
+complex part of slxgen.  ELK as fallback can remain for an overlap period.
 
 ### Priority 6 — YAML schema gaps (as needed)
 
