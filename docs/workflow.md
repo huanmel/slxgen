@@ -10,6 +10,7 @@
     - [1.2 For LLM-assisted authoring](#12-for-llm-assisted-authoring)
     - [1.3 PlantUML-first prototyping](#13-plantuml-first-prototyping)
     - [1.4 Enum type definitions](#14-enum-type-definitions)
+    - [1.5 Connective junctions](#15-connective-junctions)
   - [2. The edit-validate loop](#2-the-edit-validate-loop)
   - [3. Validation output — what each message means](#3-validation-output--what-each-message-means)
   - [4. Running the tools](#4-running-the-tools)
@@ -130,6 +131,8 @@ states:
     role: sink              # or: fault, error (aliases for sink)
     subchart: true          # collapsed subchart box
     type: AND               # parallel decomposition (children run simultaneously)
+    history: true           # place a history junction inside this compound state
+    junction: true          # connective junction — circle node, not a state box (see §1.5)
     states:
       CHILD_STATE:
         default: true
@@ -219,6 +222,7 @@ FAULT --> IDLE : [reset_cmd]
 | `X --> [*]` | `role: sink` on X |
 | `state P { state C }` | C is a child of P in `states:` hierarchy |
 | `--` inside a state block | parent has `type: AND` |
+| `state J <<choice>>` | `J: {junction: true}` — connective junction (see §1.5) |
 | `X : entry / code` | `en: code` on X |
 | `X : do / code` | `du: code` on X |
 | `X : exit / code` | `ex: code` on X |
@@ -324,6 +328,61 @@ requires the classdef files not to be on the path when importing into the dictio
 
 See `example/model_gen/fan_ctrl_sf.yaml` and `example/model_gen/gen_fan_ctrl.py` for a
 complete working example.
+
+---
+
+### 1.5 Connective junctions
+
+A **connective junction** is a circle routing node, not a state — it has no
+`en`/`du`/`ex` actions.  Transitions out of a junction carry numeric priorities
+(`order:`); the last (highest-numbered) branch is the implicit else path.
+
+In PlantUML this maps directly to the `<<choice>>` stereotype:
+
+```plantuml
+state ACTIVE {
+  [*] --> j_entry
+  state j_entry <<choice>>
+  state NORMAL
+  state BOOST
+  state FAULT
+
+  j_entry --> FAULT   : [fault_active]
+  j_entry --> BOOST   : [boost_req]
+  j_entry --> NORMAL
+}
+```
+
+**Equivalent YAML:**
+
+```yaml
+states:
+  ACTIVE:
+    default: true
+    states:
+      j_entry:
+        junction: true
+        default: true      # initial routing point — default transition enters here
+      NORMAL: {}
+      BOOST:  {}
+      FAULT:
+        role: sink
+
+transitions:
+  - {from: ACTIVE.j_entry, to: ACTIVE.FAULT,  condition: fault_active, order: 1}
+  - {from: ACTIVE.j_entry, to: ACTIVE.BOOST,  condition: boost_req,    order: 2}
+  - {from: ACTIVE.j_entry, to: ACTIVE.NORMAL,                          order: 3}
+```
+
+**Rules:**
+
+- `junction: true` replaces all other state fields (`en`, `du`, `ex`, `type`, `history`, `subchart`); those are silently ignored.
+- A junction must have at least two outgoing transitions, each with a distinct `order:`.
+- The lowest-priority (highest `order:` number) transition is the else branch — leave its `condition:` empty.
+- A junction can be used as a source (`from: J`) or as a re-entry point (`to: J`) — both work.
+- `sf_yaml_to_puml()` renders junctions as `<<choice>>` automatically; Stateflow renders them as small circles.
+
+See `example/model_gen/junction_test_sf.yaml` for a complete working example.
 
 ---
 

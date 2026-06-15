@@ -43,12 +43,19 @@ the recommended visual preview format (encodes `en`/`du`/`ex` actions); Mermaid 
 lightweight structure-only alternative. See `docs/workflow.md §4.4`.
 
 **Enum codegen (done):** `enum_gen.py` generates MATLAB artefacts from `enums:` /
-`enums:` / `data_file:` definitions in the model YAML.  Two outputs: `<TypeName>.m` classdef files
+`data_file:` definitions in the model YAML.  Two outputs: `<TypeName>.m` classdef files
 (simulation-ready, no MATLAB required to generate) and a `sldd_gen/<stem>_sldd.m` script
 that creates a Simulink Data Dictionary for production use.  Both are wired into
 `run_pipeline` via `gen_enums=True` (default) and `gen_sldd=False` (opt-in).
 Variable types use `"Enum: TypeName"` syntax; the generator emits
 `Props.Type.Method = 'Enumerated'` automatically. See `docs/workflow.md §1.4`.
+
+**Connective junctions (done):** `junction: true` on any state in the YAML makes it a
+connective junction — a circle routing node with no actions.  Outgoing transitions use
+`order:` priorities; the last is the else branch.  `sir_to_puml()` renders junctions as
+`<<choice>>`; the MATLAB codegen emits `Stateflow.Junction` with `Position.Center` /
+`Position.Radius`.  See `docs/workflow.md §1.5` and
+`example/model_gen/junction_test_sf.yaml`.
 
 ---
 
