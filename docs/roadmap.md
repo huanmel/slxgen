@@ -18,6 +18,10 @@
     - [Priority 5c — Wrap generated .m scripts as MATLAB functions](#priority-5c--wrap-generated-m-scripts-as-matlab-functions)
     - [Priority 5d — Pure-Python layout engine (remove Node.js dependency)](#priority-5d--pure-python-layout-engine-remove-nodejs-dependency)
     - [Priority 6 — YAML schema gaps (as needed)](#priority-6--yaml-schema-gaps-as-needed)
+    - [Priority 6b — Parameter / calibration data](#priority-6b--parameter--calibration-data)
+    - [Priority 6c — Graphical functions in Stateflow charts](#priority-6c--graphical-functions-in-stateflow-charts)
+    - [Priority 6d — Requirements linking (reqID on entities)](#priority-6d--requirements-linking-reqid-on-entities)
+    - [Priority 6e — Description and comment fields](#priority-6e--description-and-comment-fields)
     - [Priority 7 — Predicate/timer extraction (Phase 5)](#priority-7--predicatetimer-extraction-phase-5)
     - [Priority 8 — Formal verification backend (long-term)](#priority-8--formal-verification-backend-long-term)
   - [Decisions and constraints](#decisions-and-constraints)
@@ -475,9 +479,202 @@ complex part of slxgen.  ELK as fallback can remain for an overlap period.
 
   An explicit `size:` in the YAML always takes precedence over `default_size`.
 
-- **Junctions**: decision nodes for shared transition routing — YAML key + codegen.
+- **Junctions**: decision nodes for shared transition routing — ✓ done (see `junction: true`).
 - **Inner transitions**: `inner: true` — stays within source's active child.
 - **Named events**: `Stateflow.Event` — no YAML key yet.
+
+### Priority 6b — Parameter / calibration data
+
+Parameters are fixed-value data accessible to Stateflow action code — they do not
+change at runtime but can be recalibrated between runs.  In MBD / ISO 26262 workflows
+they are typically `Simulink.Parameter` objects with a calibration storage class
+(e.g. `CalParam`, `ExportedGlobal`).
+
+**YAML schema** — new `params:` section, parallel to `inputs:` / `outputs:` / `locals:`:
+
+```yaml
+params:
+  - {name: BOOST_THRESH,  type: single,  value: 2.5}
+  - {name: FAULT_TIMEOUT, type: uint16,  value: 100,  storage_class: CalParam}
+  - {name: GAIN_VEC,      type: single,  value: [1.0, 0.5, 0.25],  size: [3, 1]}
+```
+
+**MATLAB codegen** — `Stateflow.Data` with `Scope = 'Parameter'`:
+
+```matlab
+p1 = Stateflow.Data(ch);
+p1.Name = 'BOOST_THRESH';
+p1.Scope = 'Parameter';
+p1.DataType = 'single';
+p1.Props.InitialValue = '2.5';
+```
+
+When `storage_class:` is present, the generator also creates a `Simulink.Parameter`
+workspace object and assigns the storage class via `getActiveConfigSet` /
+`cscdesigner` API — or writes it to the SLDD if `gen_sldd=True`.
+
+**SIR change** — add `SIRVariable` scope value `'parameter'`; codegen emits
+`Scope = 'Parameter'` instead of `'Input'` / `'Output'` / `'Local'`.
+
+**Files to change:** `stateflow_sir.py` (SIRVariable scope), `stateflow.py`
+(variable emission loop), `pipeline.py` (SLDD integration).
+
+**Complexity:** low — follows the exact same pattern as `locals:`.
+
+---
+
+### Priority 6c — Graphical functions in Stateflow charts
+
+A Stateflow graphical function is a named callable defined visually inside the
+chart.  It has a signature label (e.g. `y = clamp(x, lo, hi)`) and an internal
+sub-chart (states + transitions), or a simple flat action body for leaf functions.
+
+**YAML schema** — new top-level `functions:` section:
+
+```yaml
+functions:
+  clamp:
+    signature: "y = clamp(x, lo, hi)"
+    inputs:
+      - {name: x,  type: single}
+      - {name: lo, type: single}
+      - {name: hi, type: single}
+    outputs:
+      - {name: y,  type: single}
+    body: "y = min(max(x, lo), hi);"   # leaf function — no sub-states
+
+  routeMode:
+    signature: "routeMode(mode)"
+    inputs:
+      - {name: mode, type: "Enum: FanMode_e"}
+    states:                            # compound function — has its own chart
+      CHECK: {default: true, en: "..."}
+      APPLY: {}
+    transitions:
+      - {from: CHECK, to: APPLY, condition: valid}
+```
+
+**MATLAB codegen:**
+
+```matlab
+f1 = Stateflow.Function(ch);
+f1.Name = 'clamp';
+f1.LabelString = 'y = clamp(x, lo, hi)';
+% inputs / outputs as Stateflow.Data on f1
+% body or sub-states emitted inside f1
+```
+
+**SIR change** — add `SIRFunction` dataclass and `SIRModel.functions` list.
+
+**Files to change:** `stateflow_sir.py`, `stateflow.py`, `stateflow_sir.py` (PlantUML
+— functions render as a note or stereotyped state `<<function>>`).
+
+**Complexity:** medium-high for compound functions (recursive states/transitions);
+low for flat `body:` functions.  Recommend implementing flat-body case first.
+
+---
+
+### Priority 6d — Requirements linking (reqID on entities)
+
+Traceability from design model entities (states, transitions) back to requirements
+is a mandatory deliverable in ISO 26262 and DO-178C workflows.
+
+**YAML schema** — `req:` field on states and transitions (string or list):
+
+```yaml
+states:
+  ACTIVE:
+    req: REQ-CTRL-042
+    en: "output = 1;"
+
+transitions:
+  - from: IDLE
+    to: ACTIVE
+    req: [REQ-CTRL-010, REQ-CTRL-011]
+    condition: start
+    order: 1
+```
+
+**Two implementation modes** — offer both, selectable via `run_pipeline` option:
+
+| Mode | Mechanism | Toolbox needed |
+| ---- | --------- | -------------- |
+| `req_mode='description'` (default) | Embed req IDs in `s.Description` | None |
+| `req_mode='slreq'` | Call `slreq.createLink(entity, artifact, id)` | Simulink Requirements |
+
+Description mode (no toolbox):
+
+```matlab
+s1.Description = '[REQ-CTRL-042] Active operating mode.';
+```
+
+Full `slreq` mode:
+
+```matlab
+slreq.createLink(s1, 'MyReqs.slreqx', 'REQ-CTRL-042');
+```
+
+**SIR change** — add `SIRState.req: list[str]` and `SIRTransition.req: list[str]`.
+
+**Traceability report** — optionally write a `<stem>_traceability.csv` from the SIR
+(no MATLAB required): each row is `(entity_type, entity_id, req_id)`.
+
+**Files to change:** `stateflow_sir.py`, `stateflow.py`, `pipeline.py`.
+
+**Complexity:** low for description mode; medium for `slreq` mode.
+
+---
+
+### Priority 6e — Description and comment fields
+
+Rich text descriptions on states and transitions are useful for design review,
+safety analysis, and generated documentation.  Stateflow exposes a `Description`
+property on states; transition descriptions can be stored as an annotation or in
+a comment convention inside `LabelString`.
+
+**YAML schema** — `desc:` field on states and transitions:
+
+```yaml
+states:
+  ACTIVE:
+    desc: "Active operating mode. Entered when start signal is received and
+           self-test has passed. All outputs are driven from this state."
+    en: "output = 1;"
+
+transitions:
+  - from: IDLE
+    to: ACTIVE
+    desc: "Start-up transition. Guards: start AND self_test_ok."
+    condition: "start && self_test_ok"
+    order: 1
+```
+
+**MATLAB codegen:**
+
+```matlab
+s1.Description = 'Active operating mode. Entered when ...';
+```
+
+Transitions in Stateflow do not have a `Description` property — store the `desc:`
+value as a MATLAB comment in the generated script directly above the transition
+creation block:
+
+```matlab
+% IDLE --> ACTIVE : Start-up transition. Guards: start AND self_test_ok.
+t3 = Stateflow.Transition(ch);
+```
+
+**SIR change** — add `SIRState.desc: str | None` and `SIRTransition.desc: str | None`.
+
+**Generated documentation** — `sf_yaml_to_doc(yaml_path, output_path)` (optional
+follow-on): produce a Markdown table of all states + descriptions from the SIR,
+no MATLAB required.
+
+**Files to change:** `stateflow_sir.py` (2 fields), `stateflow.py` (2 emit lines).
+
+**Complexity:** very low — one optional field, one conditional codegen line per entity.
+
+---
 
 ### Priority 7 — Predicate/timer extraction (Phase 5)
 
