@@ -769,6 +769,37 @@ def _matlab_initial_value(v) -> str:
     return _escape_matlab_str(str(v))
 
 
+_MATLAB_TYPE_CAST = {
+    'boolean': 'logical', 'uint8': 'uint8', 'uint16': 'uint16',
+    'uint32': 'uint32', 'uint64': 'uint64', 'int8': 'int8',
+    'int16': 'int16', 'int32': 'int32', 'int64': 'int64',
+    'single': 'single', 'double': 'double',
+}
+
+
+def _matlab_param_workspace_assign(name: str, type_str, value) -> str:
+    """Return a MATLAB base-workspace assignment line for a Parameter value.
+
+    Parameter-scope Stateflow data does not accept Props.InitialValue — the
+    value is resolved from the base workspace at simulation time.  Emit a
+    typed assignment so the variable is ready before 'sim()' is called.
+    """
+    cast = _MATLAB_TYPE_CAST.get(str(type_str or '').lower(), '') if type_str else ''
+
+    if isinstance(value, list):
+        elems = ' '.join(_matlab_initial_value(v) for v in value)
+        val_expr = f'[{elems}]'
+    elif isinstance(value, bool):
+        val_expr = 'true' if value else 'false'
+    else:
+        val_expr = str(value)
+
+    if cast:
+        val_expr = f'{cast}({val_expr})'
+
+    return f"{name} = {val_expr};"
+
+
 def _matlab_str_literal(s: str) -> str:
     """Return a MATLAB expression for string s.
 
@@ -1053,11 +1084,13 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: 'str | None' = None,
         if d.get('type'):
             lines.append(f"{v}.Props.Type.Method = '{_sf_type_method(d['type'])}';")
             lines.append(f"{v}.DataType = '{_escape_matlab_str(d['type'])}';")
-        if d.get('initial_value') is not None:
-            lines.append(f"{v}.Props.InitialValue = '{_matlab_initial_value(d['initial_value'])}';")
         if 'size' in d:
             size_str = ' '.join(str(n) for n in d['size'])
             lines.append(f"{v}.Props.Array.Size = '[{size_str}]';")
+        # Parameter scope data does not support Props.InitialValue — the value
+        # is resolved from the base workspace by name at simulation time.
+        if d.get('initial_value') is not None:
+            lines.append(_matlab_param_workspace_assign(d['name'], d.get('type'), d['initial_value']))
 
     states_dict = chart_dict.get('states', {})
     # Preserve original YAML order for ELK (edge model-order affects LINEAR_SEGMENTS placement).

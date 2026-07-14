@@ -57,6 +57,7 @@ passed through `sir_to_chart_dict()` or it is silently dropped before codegen.
 # Quick — full pipeline in one call
 from slxgen import run_pipeline
 run_pipeline('my_chart.yaml', run_matlab=True, session_name='slxgen')
+# subsys_ref=True → also produces <stem>_sub.slx (Subsystem Reference component for reuse)
 
 # Explicit — validate first, then generate
 from slxgen.stateflow_sir import yaml_to_sir, sir_validate

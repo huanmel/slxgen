@@ -668,6 +668,7 @@ run_pipeline(
     lint=True,
     gen_enums=True,         # write <TypeName>.m classdef files to out_dir (default: True)
     gen_sldd=False,         # generate + run sldd_gen/<stem>_sldd.m → sldd_gen/<stem>.sldd
+    subsys_ref=False,       # wrap chart in SubSystem + save <stem>_sub.slx reference component
 )
 ```
 

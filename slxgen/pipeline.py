@@ -18,6 +18,7 @@ from pathlib import Path
 import contextlib
 import io
 import json
+import re
 import yaml
 
 from .stateflow_sir import yaml_to_sir, sir_validate, sf_yaml_to_sir_json
@@ -27,10 +28,77 @@ _MATLAB_SCRIPTS = Path(__file__).parent / 'matlab'
 _SEP = '-' * 60
 _SESSION_TIP = "Tip: open MATLAB and run  matlab.engine.shareEngine('{name}')  for a persistent session."
 
+# Maps (min_year, min_sub) → MATLAB code snippet key for version-aware dispatch.
+# First entry whose key is <= detected version is used (descending sort at runtime).
+# None means "not supported — use fallback".
+_SUBSYS_REF_API = {
+    # Simulink.SubsystemReference namespace introduced in R2022a.
+    # convertSubsystemToSubsystemReference(block_path, dest_path_no_ext)
+    (2022, 1): 'SubsystemReference_2022a',
+    # Pre-R2022a: no direct conversion API — copy chart block into SubSystem-type .slx
+    (0, 0): 'fallback_copy',
+}
+
 
 def _hdr(step, total, label):
     print(f'\n[{step}/{total}] {label}')
     print(_SEP)
+
+
+def _matlab_version(eng) -> tuple:
+    """Return (year, sub) for the connected MATLAB, e.g. (2024, 1) for R2024a."""
+    rel = str(eng.eval("ver('Simulink').Release", nargout=1))  # e.g. '(R2024a)'
+    m = re.search(r'R(\d{4})([ab])', rel)
+    if m:
+        return (int(m.group(1)), 1 if m.group(2) == 'a' else 2)
+    return (9999, 1)
+
+
+def _eval_subsys_ref(eng, model_name, chart_name, ref_path, matlab_ver):
+    """Create a Subsystem Reference component .slx from the built chart.
+
+    chart_name is the Stateflow chart name from YAML (= the Simulink block name,
+    since ch.Name = ... in the generated script renames the block too).
+
+    Behaviour varies by MATLAB version; _SUBSYS_REF_API selects the approach.
+
+    R2022a+: createSubsystem + convertSubsystemToSubsystemReference
+      → main model is modified (Chart wrapped in SubsysRef block) and saved.
+    Pre-R2022a fallback: copy chart block into a fresh SubSystem-type .slx;
+      main model is left unchanged.
+    """
+    ref_path_fwd = ref_path  # caller already used .replace('\\', '/')
+    # convertSubsystemToSubsystemReference wants path WITHOUT .slx extension
+    ref_stem_path = ref_path_fwd[:-4] if ref_path_fwd.endswith('.slx') else ref_path_fwd
+    ref_model = Path(ref_path).stem  # filename only, e.g. 'fan_ctrl_sf_sub'
+
+    # Pick best matching API
+    api_key = None
+    for min_ver in sorted(_SUBSYS_REF_API, reverse=True):
+        if matlab_ver >= min_ver:
+            api_key = _SUBSYS_REF_API[min_ver]
+            break
+
+    if api_key == 'SubsystemReference_2022a':
+        code = "\n".join([
+            f"chart_h = get_param(['{model_name}' '/' '{chart_name}'], 'Handle');",
+            f"Simulink.BlockDiagram.createSubsystem(chart_h);",
+            f"set_param(['{model_name}' '/Subsystem'], 'Name', '{chart_name}');",
+            f"Simulink.SubsystemReference.convertSubsystemToSubsystemReference("
+            f"['{model_name}' '/' '{chart_name}'], '{ref_stem_path}');",
+            f"save_system('{model_name}');",
+        ])
+    else:
+        # Pre-R2022a: copy chart into a SubSystem-type .slx (independent copy)
+        code = "\n".join([
+            f"new_system('{ref_model}', 'SubSystem');",
+            f"open_system('{ref_model}');",
+            f"add_block(['{model_name}' '/' '{chart_name}'], ['{ref_model}' '/' '{chart_name}']);",
+            f"save_system('{ref_model}', '{ref_path_fwd}');",
+            f"bdclose('{ref_model}');",
+        ])
+
+    eng.eval(code, nargout=0)
 
 
 def run_pipeline(
@@ -49,6 +117,7 @@ def run_pipeline(
     adaptive_leaf_width=False,
     adaptive_spacing=False,
     default_size=None,
+    subsys_ref=False,
     verbose=True,
 ):
     """Validate, generate, and optionally build a Stateflow model in MATLAB.
@@ -101,6 +170,11 @@ def run_pipeline(
     adaptive_spacing : bool
         Scale the ELK node gap per compound based on the number of labeled
         transitions between sibling pairs, so stacked labels have room to breathe.
+    subsys_ref : bool
+        After building the .slx, wrap the Chart block in a Simulink Subsystem and
+        export it as a Subsystem Reference component file ``<stem>_sub.slx``.
+        Requires ``run_matlab=True``.  The main model is re-saved with the
+        Subsystem Reference block replacing the bare Chart block.
     verbose : bool
         Print step headers and status lines.
 
@@ -109,6 +183,7 @@ def run_pipeline(
     dict
         script  : Path        — generated .m file
         slx     : Path | None — generated .slx (None if run_matlab=False)
+        slx_ref : Path | None — subsystem reference .slx (None if subsys_ref=False)
         sir     : Path | None — SIR JSON (None if dump_sir=False)
         issues  : list[str]   — SIR validation messages (WARNING/ERROR prefix)
         lint    : list[dict]  — sfLintChart findings (empty when skipped)
@@ -221,6 +296,7 @@ def run_pipeline(
     result = {
         'script': script_path,
         'slx': None,
+        'slx_ref': None,
         'sir': sir_json_path,
         'issues': validation_issues,
         'lint': [],
@@ -282,30 +358,48 @@ def run_pipeline(
     if _stale_slx.exists():
         _stale_slx.unlink()
 
-    eng.cd(str(out_dir), nargout=0)
+    eng.cd(str(out_dir.resolve()), nargout=0)
 
     if gen_sldd and sldd_script_path is not None:
         sldd_dir = sldd_script_path.parent
         if verbose:
             print(f'  Running     : sldd_gen/{sldd_script_path.name}  (create/update .sldd)')
-        eng.cd(str(sldd_dir), nargout=0)
-        eng.run(str(sldd_script_path), nargout=0)
+        eng.cd(str(sldd_dir.resolve()), nargout=0)
+        eng.run(str(sldd_script_path.resolve()), nargout=0)
         sldd_path = sldd_dir / (_sldd_name + '.sldd')
         result['sldd'] = sldd_path
         if verbose:
             status = 'OK' if sldd_path.exists() else 'NOT FOUND'
             print(f'  SLDD        : sldd_gen/{sldd_path.name}  [{status}]')
-        eng.cd(str(out_dir), nargout=0)
+        eng.cd(str(out_dir.resolve()), nargout=0)
 
     if verbose:
         print(f'  Running     : {script_path.name}')
-    eng.run(str(script_path), nargout=0)
+    eng.run(str(script_path.resolve()), nargout=0)
 
     slx_path = out_dir / (model_name + '.slx')
     result['slx'] = slx_path
     if verbose:
         status = 'OK' if slx_path.exists() else 'NOT FOUND'
         print(f'  Built       : {slx_path.name}  [{status}]')
+
+    if subsys_ref:
+        if verbose:
+            print(f'  SubsysRef   : wrapping chart -> subsystem reference...')
+        ref_slx_path = out_dir / (model_name + '_sub.slx')
+        if ref_slx_path.exists():
+            ref_slx_path.unlink()
+        chart_name = chart_dict.get('name', model_name)
+        matlab_ver = _matlab_version(eng)
+        if verbose:
+            api_used = _SUBSYS_REF_API.get(max(k for k in _SUBSYS_REF_API if k <= matlab_ver), 'fallback_copy')
+            print(f'  MATLAB ver  : R{matlab_ver[0]}{"a" if matlab_ver[1]==1 else "b"}  API: {api_used}')
+        _eval_subsys_ref(eng, model_name, chart_name,
+                         str(ref_slx_path.resolve()).replace('\\', '/'), matlab_ver)
+        result['slx_ref'] = ref_slx_path
+        if verbose:
+            status = 'OK' if ref_slx_path.exists() else 'NOT FOUND'
+            print(f'  SubsysRef   : {ref_slx_path.name}  [{status}]')
 
     # ── Step 4: sfLint (MATLAB) ───────────────────────────────────────────────
     if lint:
@@ -317,10 +411,10 @@ def run_pipeline(
                 print('  Skipped     : .slx not found')
         else:
             lint_json = out_dir / (model_name + '_lint.json')
-            eng.addpath(str(_MATLAB_SCRIPTS).replace('\\', '/'), nargout=0)
+            eng.addpath(str(_MATLAB_SCRIPTS.resolve()).replace('\\', '/'), nargout=0)
             eng.slx_lint(  # type: ignore[union-attr]
-                str(slx_path).replace('\\', '/'),
-                str(lint_json).replace('\\', '/'),
+                str(slx_path.resolve()).replace('\\', '/'),
+                str(lint_json.resolve()).replace('\\', '/'),
                 nargout=0,
             )
             result['lint'] = json.loads(lint_json.read_text(encoding='utf-8'))
