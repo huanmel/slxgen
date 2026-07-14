@@ -18,7 +18,7 @@
     - [Priority 5c — Wrap generated .m scripts as MATLAB functions](#priority-5c--wrap-generated-m-scripts-as-matlab-functions)
     - [Priority 5d — Pure-Python layout engine (remove Node.js dependency)](#priority-5d--pure-python-layout-engine-remove-nodejs-dependency)
     - [Priority 6 — YAML schema gaps (as needed)](#priority-6--yaml-schema-gaps-as-needed)
-    - [Priority 6b — Parameter / calibration data](#priority-6b--parameter--calibration-data)
+    - [Priority 6b — Parameter / calibration data ✓ done](#priority-6b--parameter--calibration-data--done)
     - [Priority 6c — Graphical functions in Stateflow charts](#priority-6c--graphical-functions-in-stateflow-charts)
     - [Priority 6d — Requirements linking (reqID on entities)](#priority-6d--requirements-linking-reqid-on-entities)
     - [Priority 6e — Description and comment fields](#priority-6e--description-and-comment-fields)
@@ -61,6 +61,11 @@ connective junction — a circle routing node with no actions.  Outgoing transit
 `<<choice>>`; the MATLAB codegen emits `Stateflow.Junction` with `Position.Center` /
 `Position.Radius`.  See `docs/workflow.md §1.5` and
 `example/model_gen/junction_test_sf.yaml`.
+
+**Parameters (done):** `params:` section in YAML — `Stateflow.Data` with `Scope='Parameter'`.
+Supports `value:` (inline constant → `Props.InitialValue`) or no value (workspace variable
+pattern, `Props.InitialValue` left empty).  Supports `type:`, `size:` identical to
+`inputs`/`locals`.  See `docs/workflow.md §1.2` and `example/model_gen/fan_ctrl_sf.yaml`.
 
 ---
 
@@ -483,7 +488,7 @@ complex part of slxgen.  ELK as fallback can remain for an overlap period.
 - **Inner transitions**: `inner: true` — stays within source's active child.
 - **Named events**: `Stateflow.Event` — no YAML key yet.
 
-### Priority 6b — Parameter / calibration data
+### Priority 6b — Parameter / calibration data ✓ done
 
 Parameters are fixed-value data accessible to Stateflow action code — they do not
 change at runtime but can be recalibrated between runs.  In MBD / ISO 26262 workflows

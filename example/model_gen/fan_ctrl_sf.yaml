@@ -18,8 +18,10 @@
 
 name: FanCtrl
 
+params:
+  - {name: debTout, type: uint8, value: 10}   # debounce timeout in ticks (calibration constant)
+
 inputs:
-  - {name: debTout,    type: uint8}
   - {name: fan_on,     type: boolean}   # fan system active
   - {name: boost_req,  type: boolean}   # boost override request (level signal)
   - {name: mode2auto,  type: boolean}   # AUTO mode request

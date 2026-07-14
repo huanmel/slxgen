@@ -21,9 +21,9 @@ from typing import Any
 @dataclass
 class SIRVariable:
     name: str
-    scope: str           # 'input' | 'output' | 'local'
+    scope: str           # 'input' | 'output' | 'local' | 'parameter'
     type: str | None
-    initial_value: Any        # None if unspecified in YAML
+    initial_value: Any        # None if unspecified in YAML; for params this is the value: field
     size: list | None = None  # None = not specified (no Props.Array.Size emitted); [1] = explicit scalar; [-1] = inherited
 
 
@@ -129,6 +129,15 @@ def yaml_to_sir(chart_dict: dict, default_size: list | None = None) -> SIRModel:
                 initial_value=v.get('initial_value'),
                 size=v.get('size', default_size),
             ))
+    for v in chart_dict.get('params', []):
+        # params use value: (a calibration constant); initial_value: accepted as alias
+        variables.append(SIRVariable(
+            name=v.get('name', ''),
+            scope='parameter',
+            type=v.get('type'),
+            initial_value=v.get('value', v.get('initial_value')),
+            size=v.get('size', default_size),
+        ))
 
     # --- States (recursive flatten, depth-first pre-order) ---
     states: list[SIRState] = []
@@ -405,13 +414,14 @@ def sir_to_chart_dict(sir: SIRModel) -> dict:
     exactly what they expect.
     """
     # --- Variables: split by scope ---
-    scope_keys = {'input': 'inputs', 'output': 'outputs', 'local': 'locals'}
-    var_lists: dict[str, list] = {'inputs': [], 'outputs': [], 'locals': []}
+    scope_keys = {'input': 'inputs', 'output': 'outputs', 'local': 'locals', 'parameter': 'params'}
+    var_lists: dict[str, list] = {'inputs': [], 'outputs': [], 'locals': [], 'params': []}
     for v in sir.variables:
         entry: dict = {'name': v.name}
         if v.type is not None:
             entry['type'] = v.type
         if v.initial_value is not None:
+            # params round-trip as 'initial_value' in the chart_dict (codegen reads it that way)
             entry['initial_value'] = v.initial_value
         if v.size is not None:
             entry['size'] = v.size
@@ -478,7 +488,7 @@ def sir_to_chart_dict(sir: SIRModel) -> dict:
         transitions.append(entry)
 
     cd: dict = {'name': sir.name}
-    for key in ('inputs', 'outputs', 'locals'):
+    for key in ('inputs', 'outputs', 'locals', 'params'):
         if var_lists[key]:
             cd[key] = var_lists[key]
     cd['states'] = top_states

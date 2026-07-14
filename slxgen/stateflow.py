@@ -1041,6 +1041,24 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: 'str | None' = None,
             size_str = ' '.join(str(n) for n in d['size'])
             lines.append(f"{v}.Props.Array.Size = '[{size_str}]';")
 
+    params = chart_dict.get('params', [])
+    if params:
+        lines.append('')
+        lines.append('%% Parameters')
+    for i, d in enumerate(params, 1):
+        v = f'd_par{i}'
+        lines.append(f"{v} = Stateflow.Data(ch);")
+        lines.append(f"{v}.Name = '{_escape_matlab_str(d['name'])}';")
+        lines.append(f"{v}.Scope = 'Parameter';")
+        if d.get('type'):
+            lines.append(f"{v}.Props.Type.Method = '{_sf_type_method(d['type'])}';")
+            lines.append(f"{v}.DataType = '{_escape_matlab_str(d['type'])}';")
+        if d.get('initial_value') is not None:
+            lines.append(f"{v}.Props.InitialValue = '{_matlab_initial_value(d['initial_value'])}';")
+        if 'size' in d:
+            size_str = ' '.join(str(n) for n in d['size'])
+            lines.append(f"{v}.Props.Array.Size = '[{size_str}]';")
+
     states_dict = chart_dict.get('states', {})
     # Preserve original YAML order for ELK (edge model-order affects LINEAR_SEGMENTS placement).
     # Sort by (from-path, order) only for MATLAB emission so Stateflow assigns ExecutionOrder
@@ -1220,12 +1238,12 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: 'str | None' = None,
                 mid_x = (sx + sw - lca_x + jbus['spine_x'] - lca_x) // 2
                 mid_y = sy + sh // 2 - lca_y
                 _tr_desc = _format_description(tr.get('desc'), tr.get('req'))
-                if _tr_desc:
-                    lines.append(f"% {_tr_desc}")
                 lines.append(f"{tv} = Stateflow.Transition({tr_parent_var});")
                 if src_var:
                     lines.append(f"{tv}.Source = {src_var};")
                 lines.append(f"{tv}.Destination = {entry_jv};")
+                if _tr_desc:
+                    lines.append(f"{tv}.Description = {_matlab_str_literal(_tr_desc)};")
                 if label:
                     lines.append(f"{tv}.LabelString = {_matlab_str_literal(label)};")
                 if tr.get('order'):
@@ -1246,8 +1264,6 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: 'str | None' = None,
 
         # --- Normal emit
         _tr_desc = _format_description(tr.get('desc'), tr.get('req'))
-        if _tr_desc:
-            lines.append(f"% {_tr_desc}")
         lines.append(f"{tv} = Stateflow.Transition({tr_parent_var});")
         if src_var:
             lines.append(f"{tv}.Source = {src_var};")
@@ -1257,6 +1273,8 @@ def stateflow_dict_to_matlab(chart_dict: Dict, model_name: 'str | None' = None,
             lines.append(f"{tv}.Destination = {dst_var};")
         else:
             lines.append(f"% WARNING: destination state '{dst_path}' not found")
+        if _tr_desc:
+            lines.append(f"{tv}.Description = {_matlab_str_literal(_tr_desc)};")
         if label:
             lines.append(f"{tv}.LabelString = {_matlab_str_literal(label)};")
         if tr.get('order'):

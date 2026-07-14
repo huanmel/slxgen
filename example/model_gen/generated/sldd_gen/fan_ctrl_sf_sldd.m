@@ -21,4 +21,6 @@ else
 end
 
 importEnumTypes(dict, {'FanMode_e', 'FanSpd_e'});
-disp(['Enum types imported to: ' sldd_path]);
+saveChanges(dict);
+clear dict;
+disp(['Saved: ' sldd_path]);

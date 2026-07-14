@@ -11,6 +11,8 @@
     - [1.3 PlantUML-first prototyping](#13-plantuml-first-prototyping)
     - [1.4 Enum type definitions](#14-enum-type-definitions)
     - [1.5 Connective junctions](#15-connective-junctions)
+    - [1.6 Descriptions and requirements linking](#16-descriptions-and-requirements-linking)
+    - [1.7 Parameters (calibration data)](#17-parameters-calibration-data)
   - [2. The edit-validate loop](#2-the-edit-validate-loop)
   - [3. Validation output — what each message means](#3-validation-output--what-each-message-means)
   - [4. Running the tools](#4-running-the-tools)
@@ -105,7 +107,12 @@ outputs:
 locals:
   - {name: counter,   type: uint8, initial_value: 0}
 
-  # size: applies equally to inputs, outputs, and locals.
+params:                         # calibration constants — Stateflow.Data with Scope='Parameter'
+  - {name: DEBOUNCE_TICKS, type: uint8,  value: 10}        # inline constant value
+  - {name: GAIN_VEC,       type: single, value: [1.0, 0.5], size: [2, 1]}  # vector param
+  - {name: TIMEOUT_THRESH, type: uint16}                    # value omitted — set from workspace
+
+  # size: applies equally to inputs, outputs, locals, and params.
   # size: omitted + default_size=None → no Props.Array.Size (Stateflow decides)
   # size: omitted + default_size=[1]  → Props.Array.Size = '[1]'  (explicit scalar)
   # size: omitted + default_size=[-1] → Props.Array.Size = '[-1]' (explicit inherited)
@@ -133,6 +140,8 @@ states:
     type: AND               # parallel decomposition (children run simultaneously)
     history: true           # place a history junction inside this compound state
     junction: true          # connective junction — circle node, not a state box (see §1.5)
+    desc: "State description text."           # freeform description (see §1.6)
+    req: REQ-SYS-001                          # requirement ID, or list: [REQ-001, REQ-002]
     states:
       CHILD_STATE:
         default: true
@@ -143,6 +152,8 @@ transitions:
     order: "1"              # execution priority (lower = higher priority)
     condition: "[signal_in]"
     action: "output = 2;"   # runs before target en:
+    desc: "Transition description."           # freeform description (see §1.6)
+    req: REQ-SYS-002                          # requirement ID(s) — same format as states
 ```
 
 ### 1.3 PlantUML-first prototyping
@@ -386,6 +397,158 @@ See `example/model_gen/junction_test_sf.yaml` for a complete working example.
 
 ---
 
+### 1.6 Descriptions and requirements linking
+
+`desc:` and `req:` fields attach human-readable context and requirement traceability
+to states and transitions. Neither affects simulation — they are stored as metadata
+in the generated artefacts.
+
+**YAML syntax:**
+
+```yaml
+states:
+  STANDBY:
+    default: true
+    desc: "Fan system idle. All outputs de-energised."
+    req: REQ-FAN-001           # single ID — string or list both accepted
+    en: "fan_mode=FanMode_e.STANDBY;"
+
+  ACTIVE:
+    desc: "Fan system running. Speed driven by sub-state selection."
+    req: [REQ-FAN-002, REQ-FAN-003]   # multiple IDs — list form
+
+transitions:
+  - from: STANDBY
+    to:   ACTIVE
+    trigger: "after(debTout,tick)"
+    condition: "fan_on"
+    order: "1"
+    req: REQ-FAN-030
+    desc: "Fan activation after debounce."
+```
+
+**Generated MATLAB — state descriptions:**
+
+When `run_pipeline` builds the `.slx`, the combined `[REQ-ID] desc text` string is
+written to the state's `Description` property, visible in the Stateflow properties panel:
+
+```matlab
+s1.Description = '[REQ-FAN-001] Fan system idle. All outputs de-energised.';
+s3.Description = '[REQ-FAN-002][REQ-FAN-003] Fan system running. Speed driven by sub-state selection.';
+```
+
+**Generated MATLAB — transition descriptions:**
+
+The combined string is written to the transition's `Description` property, immediately
+after the `Stateflow.Transition(...)` call:
+
+```matlab
+t3 = Stateflow.Transition(ch);
+t3.Description = '[REQ-FAN-030] Fan activation after debounce.';
+```
+
+**Combined format rule** — `format_description(desc, req)` concatenates as:
+
+```text
+[REQ-ID1][REQ-ID2] description text
+```
+
+- `req:` only → `[REQ-ID]`
+- `desc:` only → `description text`
+- both → `[REQ-ID] description text`
+- neither → nothing emitted (no `Description` assignment, no comment)
+
+**Requirements Toolbox** — this is the *simple mode* (no Simulink Requirements Toolbox).
+Requirement IDs are stored as text embedded in `Description`; they are visible in the
+properties panel and searchable via `grep` on the generated `.m` script.  Full
+`slreq` link objects (Priority 6d advanced) are a future roadmap item.
+
+See `example/model_gen/fan_ctrl_sf.yaml` for a working example with `desc:` and `req:`
+on all major states and the top-level transitions.
+
+---
+
+### 1.7 Parameters (calibration data)
+
+A **parameter** is a `Stateflow.Data` object with `Scope = 'Parameter'` — a constant
+value accessible inside the chart's action code, fixed during a simulation run but
+recalibrated between runs without recompiling the model.
+
+**When to use `params:` vs `locals:` vs `inputs:`**
+
+| Field | MATLAB scope | Changes at runtime? | Set by |
+| ----- | ------------ | ------------------- | ------ |
+| `inputs:` | `Input` | Yes — every sample step | Connected Simulink signal |
+| `locals:` | `Local` | Yes — chart action code writes it | Chart logic |
+| `params:` | `Parameter` | No — fixed per run | Calibration / workspace |
+
+Use `params:` for threshold values, timeout counts, lookup-table sizes, and any
+constant that production calibration tools will tune between builds.
+
+**YAML syntax:**
+
+```yaml
+params:
+  - {name: DEBOUNCE_TICKS, type: uint8,  value: 10}         # inline constant
+  - {name: FAULT_TIMEOUT,  type: uint16, value: 100}
+  - {name: GAIN_TABLE,     type: single, size: [4, 1]}      # no value — set from workspace
+```
+
+Fields supported:
+
+| Field | Required | Notes |
+| ----- | -------- | ----- |
+| `name:` | yes | referenced in action code and `after()` triggers |
+| `type:` | yes | same built-in or `"Enum: X"` syntax as inputs/locals |
+| `value:` | no | inline constant → `Props.InitialValue`; omit for workspace variable pattern |
+| `size:` | no | same `[n, m]` / `[-1]` syntax as inputs/locals |
+
+**Generated MATLAB — with inline value:**
+
+```matlab
+d_par1 = Stateflow.Data(ch);
+d_par1.Name = 'DEBOUNCE_TICKS';
+d_par1.Scope = 'Parameter';
+d_par1.Props.Type.Method = 'Built-in';
+d_par1.DataType = 'uint8';
+d_par1.Props.InitialValue = '10';
+```
+
+**Generated MATLAB — workspace variable pattern (no `value:`):**
+
+```matlab
+d_par1 = Stateflow.Data(ch);
+d_par1.Name = 'GAIN_TABLE';
+d_par1.Scope = 'Parameter';
+d_par1.Props.Type.Method = 'Built-in';
+d_par1.DataType = 'single';
+d_par1.Props.Array.Size = '[4 1]';
+% Props.InitialValue left empty — value resolved from base workspace at simulation time
+```
+
+The chart references the workspace variable by matching `Name` — define
+`GAIN_TABLE = Simulink.Parameter(...)` in the base workspace or SLDD before simulation.
+
+**Using parameters in action code and triggers:**
+
+Parameters are referenced by name exactly like locals or inputs:
+
+```yaml
+states:
+  DEBOUNCE:
+    en: "timer = 0;"
+transitions:
+  - from: DEBOUNCE
+    to:   ACTIVE
+    trigger: "after(DEBOUNCE_TICKS, tick)"   # parameter in after() trigger
+    condition: "fan_on"
+```
+
+See `example/model_gen/fan_ctrl_sf.yaml` — `debTout` is defined as a `params:` entry
+and used in all `after(debTout, tick)` triggers throughout the chart.
+
+---
+
 ## 2. The edit-validate loop
 
 The core workflow. Keep the loop tight — structure errors found early are cheap;
@@ -604,25 +767,73 @@ when you do not need to see action code.
 
 ### 4.5 Inspect, compare, and extract
 
-**Inspect an existing SLX model:**
+#### Inspect an existing SLX model
+
+`slx_process()` is the all-in-one inspection entry point. It parses the SLX,
+enriches connections, and writes output files next to the model (or to `output_dir`):
 
 ```python
 from slxgen import slx_process
+
 slx_process('model.slx', filters={}, save=True)
-# writes JSON + text report + Mermaid block diagram to output dir
-# with save=True also exports PNG via MATLAB
+# or — choose specific outputs only:
+slx_process('model.slx', filters={}, save=True,
+            output_dir='out/', outputs=['report.txt', 'arch.md', 'sf.yaml'])
 ```
 
-**Compare two SLX model versions:**
+**Output files** written by `slx_process()`:
+
+| Suffix | Content | Best for |
+| ------ | ------- | -------- |
+| `_report.txt` | Plain-text block/connection report | LLM review — concise, no XML noise |
+| `_arch.md` | Mermaid block diagram of Simulink topology | Visual topology review |
+| `_slim.json` | Filtered enriched model dict | Programmatic analysis |
+| `_full.json` | Raw parsed model (all XML fields) | Deep debugging |
+| `_slim.min.json` | Minified slim JSON | Storage / transfer |
+| `_sf.yaml` | Stateflow charts extracted as slxgen YAML | Feed to LLM for modification |
+| `_sf.m` | Stateflow charts as MATLAB codegen script | Direct rebuild reference |
+
+**For LLM review of an existing model**, use `report.txt` + `arch.md` + `sf.yaml`:
+
+```python
+from slxgen import slx_process, sf_yaml_to_puml
+
+# Step 1 — extract
+slx_process('MyCtrl.slx', filters={}, save=True, output_dir='review/',
+            outputs=['report.txt', 'arch.md', 'sf.yaml'])
+
+# Step 2 — convert extracted Stateflow YAML to PlantUML for visual review
+sf_yaml_to_puml('review/MyChart_sf.yaml', output_path='review/MyChart_sf.puml')
+```
+
+Then paste `report.txt` and `MyChart_sf.puml` into the LLM conversation:
+
+```text
+"Here is the model report and Stateflow diagram.
+Summarise the operating modes and identify any states with no exit transition."
+```
+
+#### Inspect in-memory (no files written)
+
+```python
+from slxgen import parse_slx, enrich_connections, model_to_text, model_to_markdown
+
+slim = enrich_connections(parse_slx('model.slx'))
+print(model_to_text(slim))          # plain-text report → paste to LLM
+print(model_to_markdown(slim))      # Mermaid diagram
+```
+
+#### Compare two SLX model versions
 
 ```python
 from slxgen import parse_slx, enrich_connections, compare_models
+
 a = enrich_connections(parse_slx('model_v1.slx'))
 b = enrich_connections(parse_slx('model_v2.slx'))
 diff = compare_models({'v1': a, 'v2': b})
 ```
 
-**Extract SIR JSON for inspection:**
+#### Extract SIR JSON for Stateflow chart inspection
 
 ```python
 from slxgen.stateflow_sir import yaml_to_sir

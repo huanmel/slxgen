@@ -223,6 +223,11 @@ package-lock.json
 
 work/
 
+# Scratch / temp files in project root
+_tmp*.m
+_tmp*.txt
+_pos.txt
+
 # MATLAB build artifacts
 slprj/
 
