@@ -1,6 +1,6 @@
 # slxgen — Authoring Workflow
 
-**Last updated:** June 2026
+**Last updated:** July 2026
 
 ---
 
@@ -13,6 +13,7 @@
     - [1.5 Connective junctions](#15-connective-junctions)
     - [1.6 Descriptions and requirements linking](#16-descriptions-and-requirements-linking)
     - [1.7 Parameters (calibration data)](#17-parameters-calibration-data)
+    - [1.8 MATLAB Function blocks](#18-matlab-function-blocks)
   - [2. The edit-validate loop](#2-the-edit-validate-loop)
   - [3. Validation output — what each message means](#3-validation-output--what-each-message-means)
   - [4. Running the tools](#4-running-the-tools)
@@ -546,6 +547,112 @@ transitions:
 
 See `example/model_gen/fan_ctrl_sf.yaml` — `debTout` is defined as a `params:` entry
 and used in all `after(debTout, tick)` triggers throughout the chart.
+
+---
+
+### 1.8 MATLAB Function blocks
+
+`slxgen` can generate Simulink **MATLAB Function blocks** (`Stateflow.EMChart`) in
+addition to Stateflow charts.  Use this when algorithmic logic — filtering, limiting,
+table lookup — is better expressed as procedural MATLAB code than as a state machine.
+
+**YAML format** — set `type: matlab_function` at the top level:
+
+```yaml
+type: matlab_function
+name: SimpleFilter
+desc: "First-order low-pass filter"
+req: REQ-FILTER-001
+
+inputs:
+  - {name: u,  type: single}
+  - {name: Ts, type: double}
+
+outputs:
+  - {name: y,  type: single}
+
+params:
+  - {name: ALPHA, type: single, value: 0.1}
+
+code: |
+  persistent x_prev;
+  if isempty(x_prev)
+      x_prev = single(0);
+  end
+  y = ALPHA * single(u) + (single(1) - ALPHA) * x_prev;
+  x_prev = y;
+```
+
+**Key differences from Stateflow YAML:**
+
+| Field | Stateflow | MATLAB Function |
+| ----- | --------- | --------------- |
+| `type:` | absent (default) | `matlab_function` (required) |
+| `states:` / `transitions:` | core content | not used |
+| `locals:` | `Local` scope data | not used — use `persistent` in `code:` |
+| `params:` | `Stateflow.Data` Parameter scope | base-workspace variables (`ALPHA = single(0.1);`) |
+| `code:` | not used | function body (no signature or `end` — generated automatically) |
+| `enums:` / `data_file:` | supported | not used |
+
+**`params:` in MATLAB Function blocks** — unlike Stateflow params (which create
+`Stateflow.Data` objects), params here become base-workspace variable assignments
+emitted at the end of the build script:
+
+```matlab
+ALPHA = single(0.1);
+```
+
+The function body references them by name.  If you omit `value:`, no assignment is
+emitted and you must set the variable in the workspace before simulation.
+
+**`code:` is the function body only** — the signature and `end` keyword are generated
+automatically from `inputs:` and `outputs:`:
+
+```matlab
+% generated from name / inputs / outputs / code:
+function y = SimpleFilter(u, Ts)
+    persistent x_prev;
+    ...
+end
+```
+
+Persistent state lives directly in `code:` using MATLAB's `persistent` keyword —
+there is no separate `locals:` field.
+
+**Port types** — `type:` on inputs and outputs sets the `DataType` of the
+corresponding `Stateflow.Data` port object after the script is loaded by Simulink.
+Supported built-in types: `single`, `double`, `boolean`, `uint8`–`uint64`, `int8`–`int64`.
+
+**Running the pipeline:**
+
+```python
+from slxgen import run_pipeline
+
+# Validate + generate .m script (no MATLAB needed)
+run_pipeline('simple_filter_mlf.yaml', run_matlab=False)
+
+# Full pipeline: validate → generate → build .slx
+run_pipeline('simple_filter_mlf.yaml', run_matlab=True, session_name='slxgen')
+```
+
+sfLint and `subsys_ref` are automatically skipped for `matlab_function` type.
+
+**Low-level API:**
+
+```python
+from slxgen import yaml_to_mlf, mlf_validate, mlf_to_matlab, mlf_yaml_to_matlab
+
+chart_dict = yaml.safe_load(Path('simple_filter_mlf.yaml').read_text())
+mlf = yaml_to_mlf(chart_dict)
+issues = mlf_validate(mlf)          # list[str] with ERROR/WARNING prefix
+script = mlf_to_matlab(mlf)         # returns MATLAB script as string
+
+# one-shot: read YAML → write .m
+mlf_yaml_to_matlab('simple_filter_mlf.yaml', output_path='generated/simple_filter_mlf.m')
+```
+
+**Example:** `example/model_gen/simple_filter_mlf.yaml` and
+`example/model_gen/mlf_quick_start.py`.
 
 ---
 

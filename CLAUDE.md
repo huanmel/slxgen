@@ -2,8 +2,12 @@
 
 ## What this project is
 
-`slxgen` generates MATLAB/Simulink Stateflow charts from YAML specifications.
-Pipeline: `YAML → yaml_to_sir() → sir_validate() → sir_to_chart_dict() → stateflow_dict_to_matlab()`.
+`slxgen` generates MATLAB/Simulink blocks from YAML specifications.
+Two block types are supported:
+
+- **Stateflow charts** (`type:` absent): `YAML → yaml_to_sir() → sir_validate() → sir_to_chart_dict() → stateflow_dict_to_matlab()`
+- **MATLAB Function blocks** (`type: matlab_function`): `YAML → yaml_to_mlf() → mlf_validate() → mlf_to_matlab()`
+
 Both directions are supported: YAML → `.slx` (generation) and `.slx` → text/JSON/PNG (inspection).
 
 ## Environment
@@ -22,11 +26,13 @@ Always use the `py311_slxgen` env — the system `python` alias does not have `m
 | ---- | ---- |
 | `slxgen/stateflow_sir.py` | SIR dataclasses, `yaml_to_sir()`, `sir_validate()`, `sir_to_chart_dict()`, diagram export |
 | `slxgen/stateflow.py` | MATLAB codegen: `stateflow_dict_to_matlab()`, ELK layout integration |
+| `slxgen/matlab_function.py` | MATLAB Function block codegen: `yaml_to_mlf()`, `mlf_validate()`, `mlf_to_matlab()` |
 | `slxgen/elk_layout.py` | ELK-based compound-state layout engine |
 | `slxgen/enum_gen.py` | Enum classdef + SLDD script generation |
 | `slxgen/matlab/sfLintChart.m` | Structural lint checker for built Stateflow charts |
-| `example/model_gen/fan_ctrl_sf.yaml` | Canonical working example — params, desc, req, enums, subchart, history, junctions |
-| `example/model_gen/Ex1_StMach.yaml` | Simpler reference example |
+| `example/model_gen/fan_ctrl_sf.yaml` | Canonical Stateflow example — params, desc, req, enums, subchart, history, junctions |
+| `example/model_gen/simple_filter_mlf.yaml` | Canonical MATLAB Function block example — inputs, outputs, params, code body |
+| `example/model_gen/Ex1_StMach.yaml` | Simpler Stateflow reference example |
 
 ## Before writing YAML
 
@@ -36,12 +42,13 @@ Section map for specific features:
 
 | Topic | Section |
 | ----- | ------- |
-| Full YAML schema | `docs/workflow.md §1.2` |
+| Full YAML schema (Stateflow) | `docs/workflow.md §1.2` |
 | PlantUML-first prototyping | `docs/workflow.md §1.3` |
 | Enum type definitions | `docs/workflow.md §1.4` |
 | Connective junctions (`junction: true`) | `docs/workflow.md §1.5` |
 | Descriptions and requirements (`desc:`, `req:`) | `docs/workflow.md §1.6` |
 | Parameters / calibration data (`params:`) | `docs/workflow.md §1.7` |
+| MATLAB Function blocks (`type: matlab_function`) | `docs/workflow.md §1.8` |
 | Design rules (naming, hierarchy, levels 0–3) | `docs/stateflow_model_creation_guideline.md` |
 
 ## Before modifying the pipeline

@@ -25,7 +25,8 @@
 
 | Mode | Direction | Entry points | Purpose |
 | ---- | --------- | ------------ | ------- |
-| **Generation** | YAML → Stateflow | `run_pipeline()` (full), `sf_yaml_to_matlab()` (generate only) | Author state machines and build `.slx` models |
+| **Generation — Stateflow** | YAML → Stateflow chart | `run_pipeline()` (full), `sf_yaml_to_matlab()` (generate only) | Author state machines and build `.slx` models |
+| **Generation — MATLAB Function** | YAML → MATLAB Function block | `run_pipeline()` (full), `mlf_yaml_to_matlab()` (generate only) | Author algorithmic blocks (`type: matlab_function`) |
 | **Inspection** | SLX → text / JSON / PNG | `slx_process()`, `model_to_text()` | Read and document existing Simulink/Stateflow models |
 
 Both modes live in the same package because `slx2txt.py` (Inspection) depends on
@@ -60,6 +61,12 @@ YAML file
   ├──────────────── Stateflow generator                            stateflow.py
   │                 stateflow_dict_to_matlab()                     [done]
   │                 Emits a self-contained MATLAB .m script.
+  │
+  ├──────────────── MATLAB Function generator                      matlab_function.py
+  │                 mlf_to_matlab()  (type: matlab_function)       [done]
+  │                 Short-circuits before SIR — yaml_to_mlf() +
+  │                 mlf_validate() replace the SIR path entirely.
+  │                 Emits add_block(EMChart) + emc.Script script.
   │
   ├──────────────── Layout engine                                  elk_layout.py
   │                 ELK bottom-up layout + post-ELK placement.     [done]
