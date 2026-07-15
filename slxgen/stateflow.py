@@ -750,13 +750,19 @@ def _escape_matlab_str(s: str) -> str:
 
 
 def _sf_type_method(type_str: str) -> str:
-    """Return the Stateflow Props.Type.Method for a given type string."""
+    """Return the Stateflow Props.Type.Method string for a given type.
+
+    Valid MATLAB values (R2024a): 'Inherited', 'Built-in', 'Bus Object',
+    'Enumerated', 'Expression', 'Fixed point'.
+    """
     if type_str.startswith('Enum:'):
         return 'Enumerated'
     if type_str.startswith('Bus:'):
-        return 'Bus Object'   # MATLAB uses 'Bus Object', not 'Bus'
+        return 'Bus Object'
     if type_str.startswith('Inherit:'):
-        return 'Inherit'
+        return 'Inherited'
+    if type_str.startswith('fixdt') or type_str.startswith('sfix') or type_str.startswith('ufix'):
+        return 'Fixed point'
     return 'Built-in'
 
 
