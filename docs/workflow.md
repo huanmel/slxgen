@@ -621,7 +621,16 @@ there is no separate `locals:` field.
 
 **Port types** — `type:` on inputs and outputs sets the `DataType` of the
 corresponding `Stateflow.Data` port object after the script is loaded by Simulink.
-Supported built-in types: `single`, `double`, `boolean`, `uint8`–`uint64`, `int8`–`int64`.
+Supported values:
+
+| `type:` prefix | Example | `Props.Type.Method` |
+| -------------- | ------- | ------------------- |
+| *(none)* | `single`, `uint8`, `boolean` | `Built-in` |
+| `Enum:` | `Enum: MyEnum_t` | `Enumerated` |
+| `Bus:` | `Bus: FanDrvrOut_bus` | `Bus` |
+| `Inherit:` | `Inherit: Same as Simulink` | `Inherit` |
+
+Omit `type:` to leave the port at its default (`Inherit: Same as Simulink`).
 
 **Running the pipeline:**
 
