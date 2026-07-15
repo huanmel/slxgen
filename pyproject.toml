@@ -7,7 +7,7 @@ name = "slxgen"
 version = "0.1.0"
 description = "Parse Simulink models to text and generate models from text descriptions"
 requires-python = ">=3.10"
-dependencies = ["pyyaml"]
+dependencies = ["pyyaml", "typer"]
 
 [project.scripts]
 slxgen = "slxgen.cli:main"
