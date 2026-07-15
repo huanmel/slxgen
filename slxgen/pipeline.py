@@ -229,6 +229,12 @@ def run_pipeline(
     if _is_mlf:
         from .matlab_function import yaml_to_mlf, mlf_validate
         mlf = yaml_to_mlf(chart_dict)
+        # Default model_name to chart's own name so the script file
+        # (<yaml_stem>.m) and the model (<chart_name>.slx) never share
+        # the same stem — MATLAB refuses to run an .m when a same-named
+        # .slx exists in the same directory.
+        if model_name == yaml_path.stem and mlf.name:
+            model_name = re.sub(r'[^\w]', '_', mlf.name)
         validation_issues = mlf_validate(mlf)
         if verbose:
             print(f'  Type        : matlab_function')
