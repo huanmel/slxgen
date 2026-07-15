@@ -665,6 +665,8 @@ def slx_process(slx_path: str, filters: Dict, save: bool = True,
     slim = filter_model_data(full, filters)
 
     if save:
+        if output_dir:
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
         base = Path(output_dir) / name if output_dir else Path(slx_path).with_suffix('')
         emit = set(outputs) if outputs is not None else set(ALL_OUTPUTS)
         if 'full.json' in emit:
