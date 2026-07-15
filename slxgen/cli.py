@@ -84,13 +84,21 @@ def generate(
 def validate(
     yaml_path: Annotated[Path, typer.Argument(help="Stateflow YAML to validate")],
 ):
-    """Validate a Stateflow YAML and print any issues. Exits 1 on ERRORs."""
+    """Validate a YAML specification and print any issues. Exits 1 on ERRORs."""
     import yaml as _yaml
-    from slxgen.stateflow_sir import yaml_to_sir, sir_validate
 
     chart_dict = _yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
-    sir = yaml_to_sir(chart_dict)
-    issues = sir_validate(sir)
+    yaml_type = chart_dict.get("type", "stateflow")
+
+    if yaml_type == "matlab_function":
+        from slxgen.matlab_function import yaml_to_mlf, mlf_validate
+        mlf = yaml_to_mlf(chart_dict)
+        issues = mlf_validate(mlf)
+    else:
+        from slxgen.stateflow_sir import yaml_to_sir, sir_validate
+        sir = yaml_to_sir(chart_dict)
+        issues = sir_validate(sir)
+
     if issues:
         for msg in issues:
             typer.echo(msg)

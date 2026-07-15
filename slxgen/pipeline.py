@@ -220,18 +220,33 @@ def run_pipeline(
         _hdr(1, total_steps, f'Validate   {yaml_path.name}')
 
     chart_dict = yaml.safe_load(yaml_path.read_text(encoding='utf-8'))
+    yaml_type = chart_dict.get('type', 'stateflow')
+    _is_mlf = yaml_type == 'matlab_function'
+
     _data_file = chart_dict.get('data_file')
     _sldd_name = Path(_data_file).stem if _data_file else yaml_path.stem
-    sir = yaml_to_sir(chart_dict, default_size=default_size)
-    validation_issues = sir_validate(sir)
+
+    if _is_mlf:
+        from .matlab_function import yaml_to_mlf, mlf_validate
+        mlf = yaml_to_mlf(chart_dict)
+        validation_issues = mlf_validate(mlf)
+        if verbose:
+            print(f'  Type        : matlab_function')
+            print(f'  Inputs      : {len(mlf.inputs)}')
+            print(f'  Outputs     : {len(mlf.outputs)}')
+            print(f'  Params      : {len(mlf.params)}')
+    else:
+        sir = yaml_to_sir(chart_dict, default_size=default_size)
+        validation_issues = sir_validate(sir)
+        if verbose:
+            print(f'  States      : {len(sir.states)}')
+            print(f'  Transitions : {len(sir.transitions)}')
+            print(f'  Variables   : {len(sir.variables)}')
 
     errors   = [m for m in validation_issues if m.startswith('ERROR')]
     warnings = [m for m in validation_issues if m.startswith('WARNING')]
 
     if verbose:
-        print(f'  States      : {len(sir.states)}')
-        print(f'  Transitions : {len(sir.transitions)}')
-        print(f'  Variables   : {len(sir.variables)}')
         if errors:
             for msg in errors:
                 print(f'  {msg}')
@@ -245,7 +260,7 @@ def run_pipeline(
         raise ValueError('Validation failed:\n' + '\n'.join(errors))
 
     sir_json_path = None
-    if dump_sir:
+    if dump_sir and not _is_mlf:
         sir_json_path = out_dir / (yaml_path.stem + '_sir.json')
         sf_yaml_to_sir_json(yaml_path, output_path=sir_json_path)
         if verbose:
@@ -256,15 +271,20 @@ def run_pipeline(
     if verbose:
         _hdr(2, total_steps, f'Generate   {script_path.name}')
 
-    with contextlib.redirect_stderr(io.StringIO()):
-        _sf_yaml_to_matlab(
-            yaml_path,
-            export_charts=True,
-            output_path=script_path,
-            model_name=model_name,
-            elk_options=elk_options,
-            default_size=default_size,
-        )
+    if _is_mlf:
+        from .matlab_function import mlf_to_matlab
+        script = mlf_to_matlab(mlf, model_name=model_name)
+        script_path.write_text(script, encoding='utf-8')
+    else:
+        with contextlib.redirect_stderr(io.StringIO()):
+            _sf_yaml_to_matlab(
+                yaml_path,
+                export_charts=True,
+                output_path=script_path,
+                model_name=model_name,
+                elk_options=elk_options,
+                default_size=default_size,
+            )
 
     if verbose:
         lines = len(script_path.read_text(encoding='utf-8').splitlines())
@@ -383,9 +403,11 @@ def run_pipeline(
         status = 'OK' if slx_path.exists() else 'NOT FOUND'
         print(f'  Built       : {slx_path.name}  [{status}]')
 
-    if subsys_ref:
+    if subsys_ref and _is_mlf:
         if verbose:
-            print(f'  SubsysRef   : wrapping chart -> subsystem reference...')
+            print('  SubsysRef   : skipped for matlab_function type')
+
+    if subsys_ref and not _is_mlf:
         ref_slx_path = out_dir / (model_name + '_sub.slx')
         if ref_slx_path.exists():
             ref_slx_path.unlink()
@@ -402,7 +424,11 @@ def run_pipeline(
             print(f'  SubsysRef   : {ref_slx_path.name}  [{status}]')
 
     # ── Step 4: sfLint (MATLAB) ───────────────────────────────────────────────
-    if lint:
+    if lint and _is_mlf:
+        if verbose:
+            _hdr(4, total_steps, 'sfLint     (skipped -- not a Stateflow chart)')
+
+    if lint and not _is_mlf:
         if verbose:
             _hdr(4, total_steps, f'sfLint     {slx_path.name}')
 

@@ -1,0 +1,23 @@
+type: matlab_function
+name: SimpleFilter
+desc: "First-order low-pass filter with configurable gain"
+req:
+  - REQ-FILTER-001
+
+inputs:
+  - {name: u,  type: single}   # raw input signal
+  - {name: Ts, type: double}   # sample time [s]
+
+outputs:
+  - {name: y,  type: single}   # filtered output
+
+params:
+  - {name: ALPHA, type: single, value: 0.1}   # filter coefficient (0..1)
+
+code: |
+  persistent x_prev;
+  if isempty(x_prev)
+      x_prev = single(0);
+  end
+  y = ALPHA * single(u) + (single(1) - ALPHA) * x_prev;
+  x_prev = y;
