@@ -813,10 +813,14 @@ def _matlab_str_literal(s: str) -> str:
 
     Multi-line strings use sprintf('...\\n...') so MATLAB parses them correctly.
     Single-line strings use plain 'value' notation.
+
+    Inside sprintf, '%' is a format-specifier prefix and must be doubled to '%%'.
+    This matters for MATLAB function bodies that contain comment lines (% ...).
     """
     escaped = _escape_matlab_str(s)
     if '\n' in escaped:
-        return "sprintf('" + escaped.replace('\n', '\\n') + "')"
+        sprintf_body = escaped.replace('%', '%%').replace('\n', '\\n')
+        return "sprintf('" + sprintf_body + "')"
     return f"'{escaped}'"
 
 
