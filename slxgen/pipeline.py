@@ -409,15 +409,14 @@ def run_pipeline(
         status = 'OK' if slx_path.exists() else 'NOT FOUND'
         print(f'  Built       : {slx_path.name}  [{status}]')
 
-    if subsys_ref and _is_mlf:
+    if subsys_ref:
         if verbose:
-            print('  SubsysRef   : skipped for matlab_function type')
-
-    if subsys_ref and not _is_mlf:
+            print(f'  SubsysRef   : wrapping block -> subsystem reference...')
         ref_slx_path = out_dir / (model_name + '_sub.slx')
         if ref_slx_path.exists():
             ref_slx_path.unlink()
-        chart_name = chart_dict.get('name', model_name)
+        # For MLF, the block name is mlf.name; for Stateflow it is chart_dict['name']
+        chart_name = mlf.name if _is_mlf else chart_dict.get('name', model_name)
         matlab_ver = _matlab_version(eng)
         if verbose:
             api_used = _SUBSYS_REF_API.get(max(k for k in _SUBSYS_REF_API if k <= matlab_ver), 'fallback_copy')

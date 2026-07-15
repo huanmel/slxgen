@@ -750,12 +750,14 @@ def _escape_matlab_str(s: str) -> str:
 
 
 def _sf_type_method(type_str: str) -> str:
-    """Return the Stateflow Props.Type.Method for a given type string.
-
-    Types beginning with 'Enum:' map to 'Enumerated'; everything else is
-    a built-in numeric or boolean type.
-    """
-    return 'Enumerated' if type_str.startswith('Enum:') else 'Built-in'
+    """Return the Stateflow Props.Type.Method for a given type string."""
+    if type_str.startswith('Enum:'):
+        return 'Enumerated'
+    if type_str.startswith('Bus:'):
+        return 'Bus Object'   # MATLAB uses 'Bus Object', not 'Bus'
+    if type_str.startswith('Inherit:'):
+        return 'Inherit'
+    return 'Built-in'
 
 
 def _matlab_initial_value(v) -> str:
