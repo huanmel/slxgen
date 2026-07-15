@@ -10,6 +10,25 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+# Path to the built-in default filter config shipped with the package
+_DEFAULT_FILTERS_YML = Path(__file__).parent.parent / "data" / "slx_filters_default.yml"
+
+
+def _load_filters(config: Optional[Path], no_filter: bool) -> dict:
+    """Load filter dict from config YAML, default config, or return empty."""
+    import yaml as _yaml
+    if no_filter:
+        return {}
+    path = config if config is not None else _DEFAULT_FILTERS_YML
+    if path.exists():
+        return _yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if config is not None:
+        typer.echo(f"ERROR: config file not found: {config}", err=True)
+        raise typer.Exit(1)
+    return {}  # default file missing (editable install edge case)
+
+
+# ── generate ──────────────────────────────────────────────────────────────────
 
 @app.command()
 def generate(
@@ -59,6 +78,8 @@ def generate(
     raise typer.Exit(1 if has_errors else 0)
 
 
+# ── validate ──────────────────────────────────────────────────────────────────
+
 @app.command()
 def validate(
     yaml_path: Annotated[Path, typer.Argument(help="Stateflow YAML to validate")],
@@ -79,6 +100,8 @@ def validate(
     raise typer.Exit(1 if has_errors else 0)
 
 
+# ── puml ──────────────────────────────────────────────────────────────────────
+
 @app.command()
 def puml(
     yaml_path: Annotated[Path, typer.Argument(help="Stateflow YAML source file")],
@@ -95,6 +118,8 @@ def puml(
         typer.echo(f"Written: {output}")
 
 
+# ── inspect ───────────────────────────────────────────────────────────────────
+
 _VALID_OUTPUTS = [
     "report.txt", "arch.md", "slim.json", "full.json",
     "slim.min.json", "sf.yaml", "sf.m",
@@ -105,22 +130,101 @@ _VALID_OUTPUTS = [
 def inspect(
     slx_path: Annotated[Path, typer.Argument(help="Simulink .slx file to inspect")],
     out_dir: Annotated[Optional[Path], typer.Option(
-        "--out-dir", "-o", help="Output directory [default: beside the .slx]")] = None,
+        "--out-dir", "-o", help="Output directory [default: <stem>_reports/ beside .slx]")] = None,
     outputs: Annotated[Optional[List[str]], typer.Option(
         "--output",
-        help=f"Output format to write (repeatable). Choices: {', '.join(_VALID_OUTPUTS)}"
+        help=f"Output format (repeatable). Choices: {', '.join(_VALID_OUTPUTS)}"
     )] = None,
+    # Filter config
+    config: Annotated[Optional[Path], typer.Option(
+        "--config", "-c",
+        help="Filter config YAML [default: built-in slx_filters_default.yml]")] = None,
+    no_filter: Annotated[bool, typer.Option(
+        "--no-filter", help="Skip all filtering (raw output)")] = False,
+    # Tree traversal
+    proj_root: Annotated[Optional[Path], typer.Option(
+        "--proj-root",
+        help="Project root for resolving referenced sub-models. "
+             "When set, processes the full model tree instead of a single .slx."
+    )] = None,
+    parse_libraries: Annotated[bool, typer.Option(
+        "--parse-libraries/--no-parse-libraries",
+        help="Also parse referenced Simulink libraries (SourceBlock refs). "
+             "Only used with --proj-root."
+    )] = False,
 ):
-    """Inspect a Simulink .slx and export text/JSON/YAML reports."""
-    from slxgen import slx_process
+    """Inspect a Simulink .slx and export text/JSON/YAML reports.
 
-    kwargs: dict = {"filters": {}, "save": True}
-    if out_dir is not None:
-        kwargs["output_dir"] = str(out_dir)
-    if outputs:
-        kwargs["outputs"] = outputs
-    slx_process(str(slx_path), **kwargs)
-    typer.echo("Done.")
+    By default uses the built-in filter config (slx_filters_default.yml).
+    Pass --config to override or --no-filter for raw unfiltered output.
+
+    With --proj-root, resolves and processes referenced sub-models recursively
+    (equivalent to process_model_tree).
+    """
+    from slxgen import slx_process, process_model_tree
+
+    filters = _load_filters(config, no_filter)
+    out_dir_str = str(out_dir) if out_dir else None
+    out_list = outputs or None
+
+    if proj_root is not None:
+        tree_kwargs: dict = {"save": True, "parse_libraries": parse_libraries}
+        if out_dir_str:
+            tree_kwargs["output_dir"] = out_dir_str
+        if out_list:
+            tree_kwargs["outputs"] = out_list
+        results = process_model_tree(str(slx_path), filters, str(proj_root), **tree_kwargs)
+        typer.echo(f"\nDone. {len(results)} model(s) processed.")
+    else:
+        kwargs: dict = {"filters": filters, "save": True}
+        if out_dir_str:
+            kwargs["output_dir"] = out_dir_str
+        if out_list:
+            kwargs["outputs"] = out_list
+        slx_process(str(slx_path), **kwargs)
+        typer.echo("Done.")
+
+
+# ── config ────────────────────────────────────────────────────────────────────
+
+@app.command()
+def config(
+    action: Annotated[str, typer.Argument(
+        help="Action: 'show' prints the default config, 'init' writes it to a file"
+    )] = "show",
+    output: Annotated[Optional[Path], typer.Option(
+        "--output", "-o",
+        help="Destination for 'init' [default: ./slx_filters.yml]")] = None,
+):
+    """Manage the filter configuration file.
+
+    \b
+    slxgen config show              Print the built-in default config to stdout
+    slxgen config init              Copy default config to ./slx_filters.yml
+    slxgen config init -o my.yml   Copy default config to a custom path
+    """
+    if action == "show":
+        if _DEFAULT_FILTERS_YML.exists():
+            typer.echo(_DEFAULT_FILTERS_YML.read_text(encoding="utf-8"))
+        else:
+            typer.echo(f"Default config not found at: {_DEFAULT_FILTERS_YML}", err=True)
+            raise typer.Exit(1)
+
+    elif action == "init":
+        dest = output or Path("slx_filters.yml")
+        if not _DEFAULT_FILTERS_YML.exists():
+            typer.echo(f"ERROR: default config not found at: {_DEFAULT_FILTERS_YML}", err=True)
+            raise typer.Exit(1)
+        if dest.exists():
+            typer.echo(f"File already exists: {dest}  (remove it first or use -o to specify another path)")
+            raise typer.Exit(1)
+        dest.write_text(_DEFAULT_FILTERS_YML.read_text(encoding="utf-8"), encoding="utf-8")
+        typer.echo(f"Written: {dest}")
+        typer.echo("Edit it, then pass it with:  slxgen inspect model.slx --config slx_filters.yml")
+
+    else:
+        typer.echo(f"ERROR: unknown action '{action}'. Use 'show' or 'init'.", err=True)
+        raise typer.Exit(1)
 
 
 def main() -> None:
